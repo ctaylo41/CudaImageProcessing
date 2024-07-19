@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.5.0)
 project(CudaImageProcessing VERSION 0.1.0 LANGUAGES C CXX CUDA)
 include_directories(${PROJECT_SOURCE_DIR}/include)
 set(KernelSources
-    kernels/imageLoad.cu
+    kernels/imageTools.cu
 )
 
 
