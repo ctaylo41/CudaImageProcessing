@@ -3,6 +3,7 @@
 #include <assert.h>
 #include "imageTools.h"
 #include "stb_image_write.h"
+#include <vector>
 inline cudaError_t checkCuda(cudaError_t result)
 {
   if (result != cudaSuccess) {
@@ -139,6 +140,29 @@ __global__ void imageSobelEdge(uchar4* returnImage, uchar4* imageLoaded, int wid
   }
 }
 
+__global__ void imageGaussianBlur(uchar4* returnImage, uchar4* imageLoaded, int width, int height, int kernalSize, float* kernal) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if(x > 0 && y > 0 && x < width - 1 && y < height - 1) {
+    float3 sum = make_float3(0.0f, 0.0f, 0.0f);
+    for(int ky = -kernalSize / 2; ky <= kernalSize / 2; ky++) {
+      for(int kx = -kernalSize / 2; kx <= kernalSize / 2; kx++) {
+        int idx = (y + ky) * width + (x + kx);
+        uchar4 pixel = imageLoaded[idx];
+        float kernalValue = kernal[(ky + kernalSize / 2) * kernalSize + (kx + kernalSize / 2)];
+        sum.x += pixel.x * kernalValue;
+        sum.y += pixel.y * kernalValue;
+        sum.z += pixel.z * kernalValue;
+      }
+    }
+    returnImage[y * width + x].x = sum.x;
+    returnImage[y * width + x].y = sum.y;
+    returnImage[y * width + x].z = sum.z;
+    returnImage[y * width + x].w = 255;
+  }
+
+}
+
 void imageSobelEdgeWrapper(uchar4* returnImage, uchar4* imageLoaded, int width, int height) {
     uchar4* d_returnImage;
     uchar4* d_imageLoaded;
@@ -159,4 +183,49 @@ void imageSobelEdgeWrapper(uchar4* returnImage, uchar4* imageLoaded, int width, 
     cudaMemcpy(returnImage, d_returnImage, width * height * sizeof(uchar4), cudaMemcpyDeviceToHost);
     cudaFree(d_returnImage);
     cudaFree(d_imageLoaded);
+}
+
+float* generateGaussianKernal(int size, float sigma) {
+  float* kernal = (float*)malloc(size * size * sizeof(float));
+  float sum = 0.0f;
+  int halfSize = size / 2;
+  for(int i = -halfSize; i<=halfSize; i++) {
+    for(int j = -halfSize; j<=halfSize; j++) {
+      float value = exp(-(i * i + j * j) / (2 * sigma * sigma)) / (2 * M_PI * sigma * sigma);
+      kernal[(i + halfSize) * size + (j + halfSize)] = value;
+      sum += value;
+    }
+  }
+
+  for(int i=0; i<size; i++) {
+    for(int j=0; j<size; j++) {
+      kernal[i * size + j] /= sum;
+    }
+  }
+  return kernal;
+}
+
+void imageGaussianBlurWrapper(uchar4* returnImage, uchar4* imageLoaded, int width, int height, int size, float sigma) {
+  float* kernal = generateGaussianKernal(size, sigma);
+  uchar4* d_returnImage;
+  uchar4* d_imageLoaded;
+  float* d_kernal;
+  checkCuda(cudaMallocManaged(&d_returnImage, width * height * sizeof(uchar4)));
+  checkCuda(cudaMallocManaged(&d_imageLoaded, width * height * sizeof(uchar4)));
+  checkCuda(cudaMallocManaged(&d_kernal, size * size * sizeof(float)));
+  checkCuda(cudaMemcpy(d_imageLoaded, imageLoaded, width * height * sizeof(uchar4), cudaMemcpyHostToDevice));
+  checkCuda(cudaMemcpy(d_kernal, kernal, size * size * sizeof(float), cudaMemcpyHostToDevice));
+  int threadsPerBlock = 16;
+  int numBlocksX = (width + threadsPerBlock - 1) / threadsPerBlock;
+  int numBlocksY = (height + threadsPerBlock - 1) / threadsPerBlock;
+  dim3 blocks(numBlocksX, numBlocksY);
+  dim3 threads(threadsPerBlock, threadsPerBlock);
+  imageGaussianBlur<<<blocks, threads>>>(d_returnImage, d_imageLoaded, width, height, size, d_kernal);
+  checkCuda(cudaGetLastError());
+  cudaDeviceSynchronize();
+  cudaMemcpy(returnImage, d_returnImage, width * height * sizeof(uchar4), cudaMemcpyDeviceToHost);
+  cudaFree(d_returnImage);
+  cudaFree(d_imageLoaded);
+  cudaFree(d_kernal);
+  free(kernal);
 }
