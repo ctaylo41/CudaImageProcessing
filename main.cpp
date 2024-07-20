@@ -51,10 +51,10 @@ uchar4* loadImage(const char* filename,int* width, int *height) {
 int main(int, char**){
     int width; 
     int height;
-    uchar4* img = loadImage("/home/paperspace/CudaImageProcessing/image/deer.jpeg",&width,&height);
+    uchar4* img = loadImage("/home/paperspace/CudaImageProcessing/image/lord.jpeg",&width,&height);
 
     imageGrayScaleWrapper(img,img,width*height);
-    imageSobelEdgeWrapper(img,img,width*height);
+    imageSobelEdgeWrapper(img,img,width,height);
     imageWriteWrapper("/home/paperspace/CudaImageProcessing/image/output.jpg",img,width,height);
     return 0;
 }

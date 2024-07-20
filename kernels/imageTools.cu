@@ -113,7 +113,7 @@ void imageGrayScaleWrapper(uchar4* returnImage, uchar4* imageLoaded, size_t imgS
 __global__ void imageSobelEdge(uchar4* returnImage, uchar4* imageLoaded, int width, int height) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
-  int stride = blockDim.x * gridDim.x;
+  
   if(x > 0 && y > 0 && x < width - 1 && y < height - 1) {
     float Gx = 0;
     float Gy = 0;
@@ -139,26 +139,24 @@ __global__ void imageSobelEdge(uchar4* returnImage, uchar4* imageLoaded, int wid
   }
 }
 
-void imageSobelEdgeWrapper(uchar4* returnImage, uchar4* imageLoaded, size_t imgSize) {
+void imageSobelEdgeWrapper(uchar4* returnImage, uchar4* imageLoaded, int width, int height) {
     uchar4* d_returnImage;
     uchar4* d_imageLoaded;
 
-    checkCuda(cudaMallocManaged(&d_returnImage, imgSize * sizeof(uchar4)));
-    checkCuda(cudaMallocManaged(&d_imageLoaded, imgSize * sizeof(uchar4)));
-    checkCuda(cudaMemcpy(d_imageLoaded, imageLoaded, imgSize * sizeof(uchar4), cudaMemcpyHostToDevice));
-    int imgSizeInt = (int)imgSize;
+    checkCuda(cudaMallocManaged(&d_returnImage, width * height * sizeof(uchar4)));
+    checkCuda(cudaMallocManaged(&d_imageLoaded, width * height * sizeof(uchar4)));
+    checkCuda(cudaMemcpy(d_imageLoaded, imageLoaded, width * height * sizeof(uchar4), cudaMemcpyHostToDevice));
     int threadsPerBlock = 16;
-    int numBlocks = (imgSizeInt + threadsPerBlock - 1) / threadsPerBlock;
-    dim3 blocks(numBlocks, numBlocks);
+    int numBlocksX = (width + threadsPerBlock - 1) / threadsPerBlock;
+    int numBlocksY = (height + threadsPerBlock - 1) / threadsPerBlock;
+    dim3 blocks(numBlocksX, numBlocksY);
     dim3 threads(threadsPerBlock, threadsPerBlock);
-    printf("here\n");
-
-    imageSobelEdge<<<blocks, threads>>>(d_returnImage, d_imageLoaded, 512, 512);
+    imageSobelEdge<<<blocks, threads>>>(d_returnImage, d_imageLoaded, width, height);
     
     checkCuda(cudaGetLastError());
 
     cudaDeviceSynchronize();
-    cudaMemcpy(returnImage, d_returnImage, imgSize * sizeof(uchar4), cudaMemcpyDeviceToHost);
+    cudaMemcpy(returnImage, d_returnImage, width * height * sizeof(uchar4), cudaMemcpyDeviceToHost);
     cudaFree(d_returnImage);
     cudaFree(d_imageLoaded);
 }

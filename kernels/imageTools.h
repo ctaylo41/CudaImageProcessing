@@ -8,5 +8,5 @@ __global__ void imageSobelEdge(uchar4* returnImage, uchar4* imageLoaded, int wid
 void imageLoadWrapper(unsigned char* image, uchar4* imageLoaded, size_t imgSize);
 void imageWriteWrapper(const char* filename, uchar4* pixels,int width,int height);
 void imageGrayScaleWrapper(uchar4* returnImage, uchar4* imageLoaded, size_t imgSize);
-void imageSobelEdgeWrapper(uchar4* returnImage, uchar4* imageLoaded, size_t imgSize);
+void imageSobelEdgeWrapper(uchar4* returnImage, uchar4* imageLoaded, int width, int height);
 #endif // IMAGETOOLS_H
