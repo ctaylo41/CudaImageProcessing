@@ -29,12 +29,12 @@ int main(int, char**){
     int width; 
     int height;
     uchar4* img = loadImage("/home/paperspace/CudaImageProcessing/image/lord.jpeg",&width,&height);
-
+    std::cout << "width: " << width << " height: " << height << std::endl;
     //imageGrayScaleWrapper(img,img,width*height);
     //imageSobelEdgeWrapper(img,img,width,height);
     //imageWriteWrapper("/home/paperspace/CudaImageProcessing/image/output.jpg",img,width,height);
-    imageGaussianBlurWrapper(img,img,width,height,5,1.0);
+    imageGaussianBlurWrapper(img,img,width,height,4,1.0);
     imageWriteWrapper("/home/paperspace/CudaImageProcessing/image/output.jpg",img,width,height);
-
+    delete[] img;
     return 0;
 }
