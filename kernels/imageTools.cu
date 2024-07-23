@@ -160,8 +160,8 @@ __global__ void imageGaussianBlur(uchar4* returnImage, uchar4* imageLoaded, int 
     returnImage[y * width + x].z = sum.z;
     returnImage[y * width + x].w = 255;
   }
-
 }
+
 
 void imageSobelEdgeWrapper(uchar4* returnImage, uchar4* imageLoaded, int width, int height) {
     uchar4* d_returnImage;
@@ -205,6 +205,8 @@ float* generateGaussianKernal(int size, float sigma) {
   return kernal;
 }
 
+
+
 void imageGaussianBlurWrapper(uchar4* returnImage, uchar4* imageLoaded, int width, int height, int size, float sigma) {
   float* kernal = generateGaussianKernal(size, sigma);
   uchar4* d_returnImage;
@@ -229,3 +231,4 @@ void imageGaussianBlurWrapper(uchar4* returnImage, uchar4* imageLoaded, int widt
   cudaFree(d_kernal);
   free(kernal);
 }
+

@@ -33,7 +33,7 @@ int main(int, char**){
     //imageGrayScaleWrapper(img,img,width*height);
     //imageSobelEdgeWrapper(img,img,width,height);
     //imageWriteWrapper("/home/paperspace/CudaImageProcessing/image/output.jpg",img,width,height);
-    imageGaussianBlurWrapper(img,img,width,height,4,1.0);
+    imageGaussianBlurWrapper(img,img,width,height,3,7.0);
     imageWriteWrapper("/home/paperspace/CudaImageProcessing/image/output.jpg",img,width,height);
     delete[] img;
     return 0;
