@@ -4,6 +4,48 @@
 #include "imageTools.h"
 #include "stb_image_write.h"
 #include <vector>
+
+struct Complex {
+  float real;
+  float imag;
+
+  __host__ __device__ Complex(float r = 0.0f, float i=0.0f) : real(r), imag(i) {}
+
+  __host__ __device__ Complex operator+(const Complex &b) const {
+    return Complex{real + b.real,imag+b.imag};
+  }
+
+  __host__ __device__ Complex operator-(const Complex &b) const {
+    return Complex{real - b.real,imag -b.imag};
+  }
+
+  __host__ __device__ Complex operator*(const Complex& b) const {
+    return Complex{real * b.real -imag *b.imag,real*b.imag+imag*b.real};
+  }
+};
+
+struct ComplexRGB {
+  Complex r;
+  Complex g;
+  Complex b;
+
+  __device__ __host__ ComplexRGB() : r(0,0),g(0,0),b(0,0) {}
+  __device__ __host__ ComplexRGB(Complex r, Complex g, Complex b) : r(r), g(g), b(b) {}
+
+  __device__ __host__ ComplexRGB operator+(const ComplexRGB &Other) {
+      return ComplexRGB{r+Other.r,g+Other.g,b+Other.b};
+  }
+
+  __device__ __host__ ComplexRGB operator-(const ComplexRGB &Other) {
+    return ComplexRGB{r-Other.r,g-Other.g,b-Other.b};
+  }
+
+  __device__ __host__ ComplexRGB operator*(const ComplexRGB &Other) {
+    return ComplexRGB{r*Other.r,g*Other.g,b*Other.b};
+  }
+
+};
+
 inline cudaError_t checkCuda(cudaError_t result)
 {
   if (result != cudaSuccess)
@@ -251,6 +293,60 @@ float *generateGaussianKernal(int size, float sigma)
   }
   return kernal;
 }
+
+__global__ void fft1D(ComplexRGB* data, int n, int step) {
+  if(n<=1) {
+    return;
+  }
+
+  ComplexRGB* odd = (ComplexRGB*)malloc(n/2*sizeof(ComplexRGB));
+  ComplexRGB* even = (ComplexRGB*)malloc(n/2*sizeof(ComplexRGB));
+
+  for(int i=0;i<n;i++) {
+    even[i] = data[i*2*step];
+    odd[i] = data[i*2+step+step];
+  }
+
+
+  fft1D<<<1,1>>>(even,n/2,step*2);
+  fft1D<<<1,1>>>(odd,n/2,step*2);
+
+  for(int i=0;i<n;i++) {
+    float t = -2 * M_PI * i / n;
+    Complex val = Complex(cos(t),sin(t));
+    ComplexRGB exp = ComplexRGB(val,val,val) * odd[i];
+    data[i * step] = even[i] + exp;
+    data[(i+n/2)*step] = even[i]-exp;
+  }
+
+  free(odd);
+  free(even);
+}
+
+__global__ void fftImage(ComplexRGB* data,int width,int height,bool direction) {
+  int idx = blockDim.x*blockIdx.x+threadIdx.x;
+  if(direction) {
+    if(idx<height) {
+      ComplexRGB* row = data + idx * width;
+      fft1D<<<1,1>>>(row,width,1);
+    } else {
+      ComplexRGB* col = data + idx;
+      fft1D<<<1,1>>>(col,height,width);
+    }
+  }
+}
+
+__global__ void convertImageToComplex(uchar4* image,ComplexRGB* complexImage,int width,int height) {
+  int x = blockDim.x*blockIdx.x+threadIdx.x;
+  int y = blockDim.y*blockIdx.y+threadIdx.y;
+
+  if(x<height && y<height) {
+    uchar4 pixel = image[width*y+x];
+    complexImage[width*y+x] = ComplexRGB(pixel.x,pixel.y,pixel.z);
+  } 
+}
+
+
 
 void imageGaussianBlurWrapper(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height, int size, float sigma)
 {
