@@ -22,6 +22,11 @@ struct Complex {
   __host__ __device__ Complex operator*(const Complex& b) const {
     return Complex{real * b.real -imag *b.imag,real*b.imag+imag*b.real};
   }
+
+  __host__ __device__ float magnitude() const {
+    return sqrt(real * real + imag * imag);
+  }
+
 };
 
 struct ComplexRGB {
@@ -346,6 +351,44 @@ __global__ void convertImageToComplex(uchar4* image,ComplexRGB* complexImage,int
   } 
 }
 
+
+__global__ void nomralizePixels(ComplexRGB* complexImage, float* magnitudeImage, int width, int height) {
+  int x = blockDim.x * blockIdx.x + threadIdx.x;
+  int y = blockDim.y * blockIdx.y + threadIdx.y;
+  if(x < width && y < height) {
+    int idx = y * width + x;
+    ComplexRGB pixel = complexImage[idx];
+    float magnitude = (pixel.r.magnitude() + pixel.g.magnitude() + pixel.b.magnitude())/3.0f;
+    magnitudeImage[idx] = magnitude;
+  }
+}
+
+__global__ void convertFloatGrayscale(float* magnitudeImage, uchar4* grayscaleImage, int width, int height) {
+  int x = blockDim.x * blockIdx.x + threadIdx.x;
+  int y = blockDim.y * blockIdx.y + threadIdx.y;
+  if(x < width && y < height) {
+    int idx = y*width+x;
+    float value = magnitudeImage[idx];
+    unsigned char pixelValue = static_cast<unsigned char>(value*255.0f);
+    grayscaleImage[idx] = make_uchar4(pixelValue,pixelValue,pixelValue,255);
+  }
+}
+
+
+void imageFFTImageGenerate(uchar4* returnImage, uchar4* imageLoaded, int width, int height) {
+  uchar4 *d_returnImage;
+  uchar4 *d_loadedImage;
+  ComplexRGB *loadedRGB;
+  
+  checkCuda(cudaMallocManaged(&d_returnImage,width*height*sizeof(uchar4)));
+  checkCuda(cudaMallocManaged(&d_loadedImage,width*height*sizeof(uchar4)));
+  checkCuda(cudaMallocManaged(&loadedRGB,width*height*sizeof(ComplexRGB)));
+
+
+
+
+
+}
 
 
 void imageGaussianBlurWrapper(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height, int size, float sigma)
