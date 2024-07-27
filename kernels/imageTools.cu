@@ -1,9 +1,12 @@
 #include <stdio.h>
 #include <cuda_runtime.h>
+#include <device_launch_parameters.h>
 #include <assert.h>
 #include "imageTools.h"
 #include "stb_image_write.h"
 #include <vector>
+#include <cfloat>
+#include <float.h>
 
 struct Complex {
   float real;
@@ -47,6 +50,10 @@ struct ComplexRGB {
 
   __device__ __host__ ComplexRGB operator*(const ComplexRGB &Other) {
     return ComplexRGB{r*Other.r,g*Other.g,b*Other.b};
+  }
+
+  __device__ __host__ float3 magnitude() const {
+    return float3{r.magnitude(),g.magnitude(),b.magnitude()};
   }
 
 };
@@ -299,6 +306,34 @@ float *generateGaussianKernal(int size, float sigma)
   return kernal;
 }
 
+__global__ void fft1D(Complex* data, int n, int step) {
+  if(n<=1) {
+    return;
+  }
+
+  Complex* odd = (Complex*)malloc(n/2*sizeof(Complex));
+  Complex* even = (Complex*)malloc(n/2*sizeof(Complex));
+
+  for(int i=0;i<n;i++) {
+    even[i] = data[i*2*step];
+    odd[i] = data[i*2+step+step];
+  }
+
+  fft1D<<<1,1>>>(even,n/2,step*2);
+  fft1D<<<1,1>>>(odd,n/2,step*2);
+
+  for(int i=0;i<n;i++) {
+    float t = -2 * M_PI * i / n;
+    Complex val = Complex(cos(t),sin(t));
+    Complex exp = val * odd[i];
+    data[i * step] = even[i] + exp;
+    data[(i+n/2)*step] = even[i] - exp;
+  }
+  
+  free(odd);
+  free(even);
+}
+
 __global__ void fft1D(ComplexRGB* data, int n, int step) {
   if(n<=1) {
     return;
@@ -311,7 +346,6 @@ __global__ void fft1D(ComplexRGB* data, int n, int step) {
     even[i] = data[i*2*step];
     odd[i] = data[i*2+step+step];
   }
-
 
   fft1D<<<1,1>>>(even,n/2,step*2);
   fft1D<<<1,1>>>(odd,n/2,step*2);
@@ -341,36 +375,26 @@ __global__ void fftImage(ComplexRGB* data,int width,int height,bool direction) {
   }
 }
 
-__global__ void convertImageToComplex(uchar4* image,ComplexRGB* complexImage,int width,int height) {
-  int x = blockDim.x*blockIdx.x+threadIdx.x;
-  int y = blockDim.y*blockIdx.y+threadIdx.y;
-
-  if(x<height && y<height) {
-    uchar4 pixel = image[width*y+x];
-    complexImage[width*y+x] = ComplexRGB(pixel.x,pixel.y,pixel.z);
-  } 
-}
-
-
-__global__ void nomralizePixels(ComplexRGB* complexImage, float* magnitudeImage, int width, int height) {
-  int x = blockDim.x * blockIdx.x + threadIdx.x;
-  int y = blockDim.y * blockIdx.y + threadIdx.y;
-  if(x < width && y < height) {
-    int idx = y * width + x;
-    ComplexRGB pixel = complexImage[idx];
-    float magnitude = (pixel.r.magnitude() + pixel.g.magnitude() + pixel.b.magnitude())/3.0f;
-    magnitudeImage[idx] = magnitude;
+__global__ void fftImage(Complex* data, int width, int height,bool direction) {
+  int idx = blockDim.x*blockIdx.x+threadIdx.x;
+  if(direction) {
+    if(idx<height) {
+      Complex* row = data + idx * width;
+      fft1D<<<1,1>>>(row,width,1);
+    } else {
+      Complex* row = data + idx * width;
+      fft1D<<<1,1>>>(row,width,1);
+    }
   }
 }
 
-__global__ void convertFloatGrayscale(float* magnitudeImage, uchar4* grayscaleImage, int width, int height) {
+__global__ void grayScaleToComplex(uchar4* imageGrayScale, Complex* imageComplex,int height, int width) {
   int x = blockDim.x * blockIdx.x + threadIdx.x;
   int y = blockDim.y * blockIdx.y + threadIdx.y;
+
   if(x < width && y < height) {
-    int idx = y*width+x;
-    float value = magnitudeImage[idx];
-    unsigned char pixelValue = static_cast<unsigned char>(value*255.0f);
-    grayscaleImage[idx] = make_uchar4(pixelValue,pixelValue,pixelValue,255);
+    Complex num = Complex{static_cast<float>(imageGrayScale[x*width+y].x), static_cast<float>(0)};
+    imageComplex[x*width+y] = num;
   }
 }
 
