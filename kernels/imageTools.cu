@@ -138,35 +138,36 @@ void imageLoadWrapper(unsigned char *image, uchar4 *imageLoaded, size_t imgSize)
   cudaFree(d_imageLoaded);
 }
 
-__global__ void imageGrayScale(uchar4 *returnImage, uchar4 *imageLoaded, size_t imgSize)
+__global__ void imageGrayScale(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height)
 {
-  int index = blockIdx.x * blockDim.x + threadIdx.x;
-  int stride = blockDim.x * gridDim.x;
-
-  for (int i = index; i < imgSize; i += stride)
-  {
-    uchar4 pixel = imageLoaded[i];
+  int x = blockIdx.x*blockDim.x+threadIdx.x;
+  int y = blockIdx.y*blockDim.y+threadIdx.y;
+  if (x < width && y < height) {
+    int idx = width * y + x;
+    uchar4 pixel = imageLoaded[idx];
     unsigned char gray = (unsigned char)(0.299f * pixel.x + 0.587f * pixel.y + 0.114f * pixel.z);
-    returnImage[i].x = gray;
-    returnImage[i].y = gray;
-    returnImage[i].z = gray;
-    returnImage[i].w = pixel.w;
+    returnImage[idx].x = gray;
+    returnImage[idx].y = gray;
+    returnImage[idx].z = gray;
+    returnImage[idx].w = pixel.w;
   }
 }
 
-void imageGrayScaleWrapper(uchar4 *returnImage, uchar4 *imageLoaded, size_t imgSize)
+void imageGrayScaleWrapper(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height)
 {
   uchar4 *d_returnImage;
   uchar4 *d_imageLoaded;
-
+  int imgSize = height*width;
   checkCuda(cudaMallocManaged(&d_returnImage, imgSize * sizeof(uchar4)));
   checkCuda(cudaMallocManaged(&d_imageLoaded, imgSize * sizeof(uchar4)));
   checkCuda(cudaMemcpy(d_imageLoaded, imageLoaded, imgSize * sizeof(uchar4), cudaMemcpyHostToDevice));
 
-  int imgSizeInt = (int)imgSize;
-  int threadsPerBlock = 256;
-  int numBlocks = (imgSizeInt + threadsPerBlock - 1) / threadsPerBlock;
-  imageGrayScale<<<numBlocks, threadsPerBlock>>>(d_returnImage, d_imageLoaded, imgSize);
+  int threadsPerBlock = 16;
+  int numBlocksX = (width + threadsPerBlock - 1) / threadsPerBlock;
+  int numBlocksY = (height + threadsPerBlock - 1) / threadsPerBlock;
+  dim3 blocks(numBlocksX, numBlocksY);
+  dim3 threads(threadsPerBlock, threadsPerBlock);
+  imageGrayScale<<<blocks, threads>>>(d_returnImage, d_imageLoaded, width,height);
   checkCuda(cudaGetLastError());
   cudaDeviceSynchronize();
   cudaMemcpy(returnImage, d_returnImage, imgSize * sizeof(uchar4), cudaMemcpyDeviceToHost);
@@ -518,12 +519,59 @@ __global__ void floatToUchar4(float* image, uchar4* returnImage, int width, int 
 
 void imageFFTImageGenerate(uchar4* returnImage, uchar4* imageLoaded, int width, int height) {
   uchar4 *d_returnImage;
-  uchar4 *d_loadedImage;
-  ComplexRGB *loadedRGB;
+  uchar4 *d_imageLoaded;
+  Complex* complexImage;
+  int maxNum;
+  int minNum;
+  float* mangnitudeImage;
+  int imgSize = width*height;
+  int threadsPerBlock = 16;
+  int numBlocksX = (width + threadsPerBlock - 1) / threadsPerBlock;
+  int numBlocksY = (height + threadsPerBlock - 1) / threadsPerBlock;
+  dim3 blocks(numBlocksX, numBlocksY);
+  dim3 threads(threadsPerBlock, threadsPerBlock);
+  checkCuda(cudaMallocManaged(&d_returnImage, imgSize * sizeof(uchar4)));
+  checkCuda(cudaMallocManaged(&d_imageLoaded, imgSize * sizeof(uchar4)));
+  checkCuda(cudaMallocManaged(&complexImage,  imgSize*sizeof(Complex)));
+  checkCuda(cudaMallocManaged(&mangnitudeImage,width*height*sizeof(float)));
+  checkCuda(cudaMemcpy(d_imageLoaded, imageLoaded, imgSize * sizeof(uchar4), cudaMemcpyHostToDevice));
+
+  imageGrayScale<<<blocks, threads>>>(d_returnImage, d_imageLoaded, width,height);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
+  grayScaleToComplex<<<blocks,threads>>>(d_returnImage,complexImage,height,width);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
+  fft1D<<<blocks,threads>>>(complexImage,width,1);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
+  fft1D<<<blocks,threads>>>(complexImage,height,width);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
+  computeMagnitude<<<blocks,threads>>>(complexImage,mangnitudeImage,width,height);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
+  logImage<<<blocks,threads>>>(mangnitudeImage,width,height);
+
+
+
+
+  cudaFree(d_returnImage);
+  cudaFree(d_imageLoaded);
+
   
-  checkCuda(cudaMallocManaged(&d_returnImage,width*height*sizeof(uchar4)));
-  checkCuda(cudaMallocManaged(&d_loadedImage,width*height*sizeof(uchar4)));
-  checkCuda(cudaMallocManaged(&loadedRGB,width*height*sizeof(ComplexRGB)));
+
+
+
+
+
+
+
 }
 
 

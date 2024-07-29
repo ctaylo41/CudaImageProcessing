@@ -29,11 +29,11 @@ int main(int, char**){
     int width; 
     int height;
     uchar4* img = loadImage("/home/paperspace/CudaImageProcessing/image/lord.jpeg",&width,&height);
-    //imageGrayScaleWrapper(img,img,width*height);
+    imageGrayScaleWrapper(img,img,width,height);
     //imageSobelEdgeWrapper(img,img,width,height);
     //imageWriteWrapper("/home/paperspace/CudaImageProcessing/image/output.jpg",img,width,height);
     //imageGaussianBlurWrapper(img,img,width,height,3,7.0);
-    imageMeanBlurWrapper(img,img,width,height);
+    //imageMeanBlurWrapper(img,img,width,height);
     imageWriteWrapper("/home/paperspace/CudaImageProcessing/image/output.jpg",img,width,height);
     delete[] img;
     return 0;
