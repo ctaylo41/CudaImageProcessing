@@ -398,6 +398,123 @@ __global__ void grayScaleToComplex(uchar4* imageGrayScale, Complex* imageComplex
   }
 }
 
+__global__ void computeMagnitude(Complex* complexImage, float* magnitudeImage,int width, int height) {
+  int x = blockDim.x * blockIdx.x + threadIdx.x;
+  int y = blockDim.y * blockIdx.y + threadIdx.y;
+
+  if(x < width && y < height) {
+    int idx = y*width + x;
+    magnitudeImage[idx] = complexImage[idx].magnitude();
+  }
+}
+
+__global__ void computeMagnitude(ComplexRGB* complexImage, float3* magnitudeImage, int width, int height) {
+  int x = blockDim.x * blockIdx.x + threadIdx.x;
+  int y = blockDim.y * blockIdx.y + threadIdx.y;
+
+  if(x < width && y < height) {
+    int idx = y*width + x;
+    magnitudeImage[idx] = complexImage[idx].magnitude();
+  }
+}
+
+__global__ void logImage(float* image, int width, int height) {
+  int x = blockDim.x * blockIdx.x + threadIdx.x;
+  int y = blockDim.y * blockIdx.y + threadIdx.y;
+
+  if(x < width && y < height) {
+    int idx = y*width + x;
+    image[idx] = logf(1.0f + image[idx]);
+  }
+}
+
+__device__ float atomicMinFloat(float* address, float val) {
+    int* address_as_int = (int*)address;
+    int old = *address_as_int, assumed;
+
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_int, assumed, __float_as_int(fminf(val, __int_as_float(assumed))));
+    } while (assumed != old);
+
+    return __int_as_float(old);
+}
+
+__device__ float atomicMaxFloat(float* address, float val) {
+    int* address_as_int = (int*)address;
+    int old = *address_as_int, assumed;
+
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_int, assumed, __float_as_int(fmaxf(val, __int_as_float(assumed))));
+    } while (assumed != old);
+
+    return __int_as_float(old);
+}
+
+__global__ void findMinMax(float* image, int width, int height, float* min, float* max) {
+  extern __shared__ float sharedData[];
+  float* sMin = sharedData;
+  float* sMax = sharedData + blockDim.x;
+
+
+  int x = blockDim.x * blockIdx.x + threadIdx.x;
+  int y = blockDim.y * blockIdx.y + threadIdx.y;
+  int idx = y*width + x;
+
+  float localMin = FLT_MIN;
+  float localMax = -FLT_MAX;
+
+  if(x < width && y < height) {
+    localMin = image[idx];
+    localMin = image[idx];
+  }
+
+  sMin[threadIdx.x] = localMin;
+  sMax[threadIdx.x] = localMax;
+  __syncthreads();
+
+  for(int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+    if(threadIdx.x < stride) {
+      sMin[threadIdx.x] = fminf(sMin[threadIdx.x],sMin[threadIdx.x+stride]);
+      sMax[threadIdx.x] = fmaxf(sMax[threadIdx.x],sMax[threadIdx.x+stride]);
+    }
+  }
+
+  if(threadIdx.x == 0) {
+    atomicMinFloat(min, sMin[0]);
+    atomicMaxFloat(max, sMax[0]);
+  }
+}
+
+
+
+__global__ void normalize(float* image, float* min, float* max, int width, int height) {
+  int x  = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if(x < width && y < height) {
+    int idx = y*width + x;
+    float normalizedValue = (image[idx] - *min) / (*max - *min) * 255.0f;
+    image[idx] = normalizedValue;
+  }
+}
+
+
+
+
+
+__global__ void floatToUchar4(float* image, uchar4* returnImage, int width, int height) {
+  int x = blockDim.x*blockIdx.x + threadIdx.x;
+  int y = blockDim.y*blockIdx.y + threadIdx.y;
+
+  if(x<width && y<height) {
+    int idx = y*width + x;
+    returnImage[idx].x = image[idx];
+    returnImage[idx].y = image[idx];
+    returnImage[idx].z = image[idx];
+    returnImage[idx].w = 255;
+  }
+}
 
 void imageFFTImageGenerate(uchar4* returnImage, uchar4* imageLoaded, int width, int height) {
   uchar4 *d_returnImage;
@@ -407,11 +524,6 @@ void imageFFTImageGenerate(uchar4* returnImage, uchar4* imageLoaded, int width, 
   checkCuda(cudaMallocManaged(&d_returnImage,width*height*sizeof(uchar4)));
   checkCuda(cudaMallocManaged(&d_loadedImage,width*height*sizeof(uchar4)));
   checkCuda(cudaMallocManaged(&loadedRGB,width*height*sizeof(ComplexRGB)));
-
-
-
-
-
 }
 
 
