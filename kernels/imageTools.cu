@@ -130,11 +130,15 @@ void imageLoadWrapper(unsigned char *image, uchar4 *imageLoaded, size_t imgSize)
 {
   unsigned char *d_image;
   uchar4 *d_imageLoaded;
+  cudaError_t cudaStatus = cudaMallocManaged(&d_image, imgSize * 4 * sizeof(unsigned char));
+  if (cudaStatus == cudaSuccess) {
+    printf("malloced\n");
+  } else {
+    fprintf(stderr, "cudaMallocManaged failed: %s\n", cudaGetErrorString(cudaStatus));
+  }
 
-  checkCuda(cudaMallocManaged(&d_image, imgSize * 4 * sizeof(unsigned char)));
   checkCuda(cudaMallocManaged(&d_imageLoaded, imgSize * sizeof(uchar4)));
   checkCuda(cudaMemcpy(d_image, image, imgSize * 4 * sizeof(unsigned char), cudaMemcpyHostToDevice));
-
   int imgSizeInt = (int)imgSize;
   int threadsPerBlock = 256;
   int numBlocks = (imgSizeInt + threadsPerBlock - 1) / threadsPerBlock;
@@ -410,8 +414,10 @@ __global__ void fftImage(Complex *data, int width, int height, bool direction)
     }
     else
     {
-      Complex *row = data + idx * width;
-      fft1D<<<1, 1>>>(row, width, 1);
+      if(idx < width) {
+      Complex *col = data + idx*height;
+      fft1D<<<1, 1>>>(col, width, 1);
+      }
     }
   }
 }
@@ -577,7 +583,6 @@ void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, 
   checkCuda(cudaMallocManaged(&complexImage, imgSize * sizeof(Complex)));
   checkCuda(cudaMallocManaged(&mangnitudeImage, width * height * sizeof(float)));
   checkCuda(cudaMemcpy(d_imageLoaded, imageLoaded, imgSize * sizeof(uchar4), cudaMemcpyHostToDevice));
-
   imageGrayScale<<<blocks, threads>>>(d_returnImage, d_imageLoaded, width, height);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
@@ -586,11 +591,11 @@ void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, 
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
   printf("to complex done\n");
-  fft1D<<<blocks, threads>>>(complexImage, width, 1);
+  fftImage<<<blocks, threads>>>(complexImage, width, height, 0);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
   printf("fft done width\n");
-  fft1D<<<blocks, threads>>>(complexImage, height, width);
+  fftImage<<<blocks, threads>>>(complexImage, width, height, 1);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
