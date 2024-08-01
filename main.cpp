@@ -29,7 +29,7 @@ int main(int, char**){
     int width; 
     int height;
 
-    uchar4* img = loadImage("/home/paperspace/CudaImageProcessing/image/lord.jpeg",&width,&height);
+    uchar4* img = loadImage("/home/paperspace/CudaImageProcessing/image/thumb.gif",&width,&height);
     std::cout << "\nload image\n" << std::endl;
 
     //imageGrayScaleWrapper(img,img,width,height);

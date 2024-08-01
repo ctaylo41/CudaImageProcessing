@@ -330,16 +330,16 @@ __global__ void fft1D(Complex *data, int n, int step)
   cudaMalloc(&even,n / 2 * sizeof(Complex));
   cudaMalloc(&odd,n / 2 * sizeof(Complex));
 
-  for (int i = 0; i < n; i++)
+  for (int i = 0; i < n/2; i++)
   {
     even[i] = data[i * 2 * step];
-    odd[i] = data[i * 2 + step + step];
+    odd[i] = data[i * 2 * step + step];
   }
 
   fft1D<<<1, 1>>>(even, n / 2, step * 2);
   fft1D<<<1, 1>>>(odd, n / 2, step * 2);  
   cudaDeviceSynchronize();
-  for (int i = 0; i < n; i++)
+  for (int i = 0; i < n/2; i++)
   {
     float t = -2 * M_PI * i / n;
     Complex val = Complex(cos(t), sin(t));
@@ -396,8 +396,10 @@ __global__ void fftImage(ComplexRGB *data, int width, int height, bool direction
     }
     else
     {
+      if(idx < width) {
       ComplexRGB *col = data + idx;
       fft1D<<<1, 1>>>(col, height, width);
+      }
     }
   }
 }
@@ -591,24 +593,25 @@ void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, 
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
   printf("to complex done\n");
-  fftImage<<<blocks, threads>>>(complexImage, width, height, 0);
-  cudaDeviceSynchronize();
-  checkCuda(cudaGetLastError());
-  printf("fft done width\n");
   fftImage<<<blocks, threads>>>(complexImage, width, height, 1);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
-
+  printf("fft done width\n");
+  fftImage<<<blocks, threads>>>(complexImage, width, height, 0);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+  printf("fft done columns\n");
   computeMagnitude<<<blocks, threads>>>(complexImage, mangnitudeImage, width, height);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
-
+  printf("dont columns\n");
   logImage<<<blocks, threads>>>(mangnitudeImage, width, height);
-
+  printf("logged entries\n");
   cudaMalloc(&d_min,sizeof(float));
   cudaMalloc(&d_max,sizeof(float));
 
   findMinMax<<<blocks,threads,2*blocks.x*sizeof(float)>>>(mangnitudeImage,width,height,d_min,d_max);
+  printf("found min and max\n");
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
@@ -616,11 +619,12 @@ void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, 
   cudaMemcpy(&h_max, d_max,sizeof(float),cudaMemcpyDeviceToHost);
   
   normalize<<<blocks,threads>>>(mangnitudeImage,&h_min,&h_max,width,height);
+  printf("normaliz\n");
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
   floatToUchar4<<<blocks,threads>>>(mangnitudeImage,d_returnImage,width,height);
-
+  printf("float to char\n");
 
   cudaMemcpy(returnImage,d_returnImage,width*height*sizeof(uchar4),cudaMemcpyDeviceToHost);
 
@@ -629,7 +633,7 @@ void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, 
   cudaFree(complexImage);
   cudaFree(d_min);
   cudaFree(d_max);
-
+  printf("memory free\n");
 
 }
 
