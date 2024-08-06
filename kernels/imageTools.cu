@@ -32,7 +32,7 @@ struct Complex
 
   __host__ __device__ float magnitude() const
   {
-    return sqrt(real * real + imag * imag);
+    return fsqrt(real * real + imag * imag);
   }
 };
 
@@ -433,6 +433,7 @@ __global__ void computeMagnitude(Complex *complexImage, float *magnitudeImage, i
   {
     int idx = y * width + x;
     magnitudeImage[idx] = complexImage[idx].magnitude();
+   
   }
 }
 
