@@ -32,7 +32,12 @@ struct Complex
 
   __host__ __device__ float magnitude() const
   {
-    return fsqrt(real * real + imag * imag);
+    return sqrt(real * real + imag * imag);
+  }
+
+  __host__ __device__ Complex operator/(float scalar) const 
+  {
+    return Complex(real / scalar, imag / scalar); 
   }
 };
 
@@ -131,9 +136,12 @@ void imageLoadWrapper(unsigned char *image, uchar4 *imageLoaded, size_t imgSize)
   unsigned char *d_image;
   uchar4 *d_imageLoaded;
   cudaError_t cudaStatus = cudaMallocManaged(&d_image, imgSize * 4 * sizeof(unsigned char));
-  if (cudaStatus == cudaSuccess) {
+  if (cudaStatus == cudaSuccess)
+  {
     printf("malloced\n");
-  } else {
+  }
+  else
+  {
     fprintf(stderr, "cudaMallocManaged failed: %s\n", cudaGetErrorString(cudaStatus));
   }
 
@@ -320,99 +328,70 @@ float *generateGaussianKernal(int size, float sigma)
   return kernal;
 }
 
-__global__ void fft1D(Complex *data, int width, int height, int step, bool isRow) {
-  int x = blockIdx.x * blockDim.x + threadIdx.x;
-  int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+
+__global__ void fft1D(Complex *data, int width, int height, int step, bool isRow)
+{
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  int idy = blockIdx.y * blockDim.y + threadIdx.y;
 
   int n = isRow ? width : height;
-  int m = isRow ? height : width;
 
-  if(x < n/2 && y < m) {
-    int i = isRow ? y * width + x : x * width + y;
-
-    Complex even = data[2 * i * step];
-    Complex odd = data[(2 * i +1) * step];
-    
-    float angle = -2.0f * M_PI * x/n;
-    Complex twiddle(cosf(angle),sinf(angle));
-
-    Complex temp = odd*twiddle;
-
-    data[i*step] = even + temp;
-    data[(i + n*m/2)*step] = even - temp;
-  }
-}
-
-__global__ void fft1D(ComplexRGB *data, int n, int step)
-{
-  if (n <= 1)
-  {
-    return;
-  }
-
-  ComplexRGB *odd, *even;
-  cudaMalloc(&odd,n / 2 * sizeof(ComplexRGB));
-  cudaMalloc(&even,n / 2 * sizeof(ComplexRGB));
-
-  for (int i = 0; i < n/2; i++)
-  {
-    even[i] = data[i * 2 * step];
-    odd[i] = data[i * 2 + step + step];
-  }
-
-  fft1D<<<1, 1>>>(even, n / 2, step * 2);
-  fft1D<<<1, 1>>>(odd, n / 2, step * 2);
-
-  for (int i = 0; i < n/2; i++)
-  {
-    float t = -2 * M_PI * i / n;
-    Complex val = Complex(cos(t), sin(t));
-    ComplexRGB exp = ComplexRGB(val, val, val) * odd[i];
-    data[i * step] = even[i] + exp;
-    data[(i + n / 2) * step] = even[i] - exp;
-  }
-
-  cudaFree(odd);
-  cudaFree(even);
-}
-
-__global__ void fftImage(ComplexRGB *data, int width, int height, bool direction)
-{
-  int idx = blockDim.x * blockIdx.x + threadIdx.x;
-  if (direction)
-  {
-    if (idx < height)
-    {
-      ComplexRGB *row = data + idx * width;
-      fft1D<<<1, 1>>>(row, width, 1);
+  if (isRow) {
+    if (idx < n / 2 && idy < height) {
+      int i = idy * width + idx;
+      if ((2 * i * step + step) < (width * height)) {
+        Complex even = data[2 * i * step];
+        Complex odd = data[2 * i * step + step];
+        float angle = -2.0f * M_PI * idx / n;
+        Complex twiddle(cosf(angle), sinf(angle));
+        Complex temp = odd * twiddle;
+        data[i * step] = even + temp;
+        if (i + n / 2 < width * height / step) {
+          data[(i + n / 2) * step] = even - temp;
+        }
+      }
     }
-    else
-    {
-      if(idx < width) {
-      ComplexRGB *col = data + idx;
-      fft1D<<<1, 1>>>(col, height, width);
+  } else {
+    if (idx < width && idy < n / 2) {
+      int i = idx * width + idy;
+      if ((2 * i * step + step) < (width * height)) {
+        Complex even = data[2 * i * step];
+        Complex odd = data[2 * i * step + step];
+        float angle = -2.0f * M_PI * idy / n;
+        Complex twiddle(cosf(angle), sinf(angle));
+        Complex temp = odd * twiddle;
+        data[i * step] = even + temp;
+        if (i + n / 2 < width * height / step) {
+          data[(i + n / 2) * step] = even - temp;
+        }
       }
     }
   }
 }
 
-__global__ void fftImage(Complex *data, int width, int height, bool direction)
+void fftImage(Complex *data, int width, int height)
 {
-  dim3 block(16,16);
-  dim3 gridRow((width/2 + block.x - 1)/block.x,(height + block.y-1)/block.y);
-  dim3 gridCol((height/2 + block.x-1)/block.x,(width + block.y-1)/block.y);
-  for (int step = 1; step<width; step*=2) {
-    fft1D<<<gridRow,block>>>(data,width,height,step,true);
-    cudaDeviceSynchronize();
-  } 
+  dim3 block(16, 16);
+  dim3 gridRow((width + block.x - 1) / block.x, height); // Changed this
+  dim3 gridCol(width, (height + block.y - 1) / block.y); // Changed this
 
-  for(int step=1; step<height;step*=2) {
-    fft1D<<<gridRow,block>>>(data,width,height,step,false);
+  for (int step = 1; step < width; step *= 2)
+  {
+    fft1D<<<gridRow, block>>>(data, width, height, step, true);
     cudaDeviceSynchronize();
+    checkCuda(cudaGetLastError());
+  }
+  printf("rows done\n");
+  for (int step = 1; step < height; step *= 2)
+  {
+    fft1D<<<gridCol, block>>>(data, width, height, step, false);
+    cudaDeviceSynchronize();
+    checkCuda(cudaGetLastError());
   }
 }
 
-__global__ void grayScaleToComplex(uchar4 *imageGrayScale, Complex *imageComplex, int height, int width)
+__global__ void grayScaleToComplex(uchar4 *imageGrayScale, Complex *imageComplex, int width, int height)
 {
   int x = blockDim.x * blockIdx.x + threadIdx.x;
   int y = blockDim.y * blockIdx.y + threadIdx.y;
@@ -420,7 +399,7 @@ __global__ void grayScaleToComplex(uchar4 *imageGrayScale, Complex *imageComplex
   if (x < width && y < height)
   {
     Complex num = Complex{static_cast<float>(imageGrayScale[x * width + y].x), static_cast<float>(0)};
-    imageComplex[x * width + y] = num;
+    imageComplex[y * width + x] = num;
   }
 }
 
@@ -433,7 +412,6 @@ __global__ void computeMagnitude(Complex *complexImage, float *magnitudeImage, i
   {
     int idx = y * width + x;
     magnitudeImage[idx] = complexImage[idx].magnitude();
-   
   }
 }
 
@@ -457,7 +435,8 @@ __global__ void logImage(float *image, int width, int height)
   if (x < width && y < height)
   {
     int idx = y * width + x;
-    image[idx] = logf(1.0f + image[idx]);
+    float c = 255.0f / logf(1.0f + 255);
+    image[idx] = c * logf(1.0f + fabsf(image[idx]));
   }
 }
 
@@ -498,7 +477,7 @@ __global__ void findMinMax(float *image, int width, int height, float *min, floa
   int x = blockDim.x * blockIdx.x + threadIdx.x;
   int y = blockDim.y * blockIdx.y + threadIdx.y;
   int idx = y * width + x;
-  int tid = threadIdx.y*blockDim.x+threadIdx.x;
+  int tid = threadIdx.y * blockDim.x + threadIdx.x;
 
   float localMin = FLT_MIN;
   float localMax = -FLT_MAX;
@@ -512,7 +491,7 @@ __global__ void findMinMax(float *image, int width, int height, float *min, floa
   sMax[tid] = localMax;
   __syncthreads();
 
-  for (int stride = blockDim.x*blockDim.y / 2; stride > 0; stride >>= 1)
+  for (int stride = blockDim.x * blockDim.y / 2; stride > 0; stride >>= 1)
   {
     if (tid < stride)
     {
@@ -556,11 +535,39 @@ __global__ void floatToUchar4(float *image, uchar4 *returnImage, int width, int 
   }
 }
 
+__global__ void fftShift(Complex *input, Complex *output, int width, int height)
+{
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if (x < width && y < height)
+  {
+    int newX = (x + width / 2) % width;
+    int newY = (y + height / 2) % height;
+
+    int oldIndex = y * width + x;
+    int newIndex = newY * width + newX;
+
+    output[newIndex] = input[oldIndex];
+  }
+}
+
+__global__ void complexToFloat(Complex *input,float *output, int width, int height) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if(x < width && y < height) {
+    int idx = y * width + x;
+    output[idx] = input[idx].real;
+  }
+}
+
 void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height)
 {
   uchar4 *d_returnImage;
   uchar4 *d_imageLoaded;
   Complex *complexImage;
+  Complex *shiftedComplexImage;
   float *d_min, *d_max;
   float h_min, h_max;
   float *mangnitudeImage;
@@ -572,6 +579,7 @@ void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, 
   dim3 threads(threadsPerBlock, threadsPerBlock);
   checkCuda(cudaMallocManaged(&d_returnImage, imgSize * sizeof(uchar4)));
   checkCuda(cudaMallocManaged(&d_imageLoaded, imgSize * sizeof(uchar4)));
+  checkCuda(cudaMallocManaged(&shiftedComplexImage,imgSize*sizeof(Complex)));
   checkCuda(cudaMallocManaged(&complexImage, imgSize * sizeof(Complex)));
   checkCuda(cudaMallocManaged(&mangnitudeImage, width * height * sizeof(float)));
   checkCuda(cudaMemcpy(d_imageLoaded, imageLoaded, imgSize * sizeof(uchar4), cudaMemcpyHostToDevice));
@@ -579,56 +587,51 @@ void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, 
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
   printf("grayscale done\n");
-  grayScaleToComplex<<<blocks, threads>>>(d_returnImage, complexImage, height, width);
+  grayScaleToComplex<<<blocks, threads>>>(d_returnImage, complexImage, width, height);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
   printf("to complex done\n");
-  fftImage<<<blocks, threads>>>(complexImage, width, height, 1);
+  fftImage(complexImage, width, height);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
-  printf("fft done width\n");
-  fftImage<<<blocks, threads>>>(complexImage, width, height, 0);
+  fftShift<<<blocks,threads>>>(complexImage,shiftedComplexImage,width,height);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
+
   printf("fft done columns\n");
-  computeMagnitude<<<blocks, threads>>>(complexImage, mangnitudeImage, width, height);
+  computeMagnitude<<<blocks, threads>>>(shiftedComplexImage, mangnitudeImage, width, height);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
   printf("dont columns\n");
   logImage<<<blocks, threads>>>(mangnitudeImage, width, height);
   printf("logged entries\n");
-  cudaMalloc(&d_min,sizeof(float));
-  cudaMalloc(&d_max,sizeof(float));
+  cudaMalloc(&d_min, sizeof(float));
+  cudaMalloc(&d_max, sizeof(float));
 
-  findMinMax<<<blocks,threads,2 * threads.x * threads.y * sizeof(float)>>>(mangnitudeImage,width,height,d_min,d_max);
+  findMinMax<<<blocks, threads, 2 * threads.x * threads.y * sizeof(float)>>>(mangnitudeImage, width, height, d_min, d_max);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
-  cudaMemcpy(&h_min, d_min, sizeof(float), cudaMemcpyDeviceToHost);
-  cudaMemcpy(&h_max, d_max, sizeof(float), cudaMemcpyDeviceToHost);
 
-  printf("found min and max\n  %.4f %.4f",h_min,h_max);
 
-  cudaMemcpy(&h_min, d_min,sizeof(float),cudaMemcpyDeviceToHost);
-  cudaMemcpy(&h_max, d_max,sizeof(float),cudaMemcpyDeviceToHost);
-  
-  normalize<<<blocks,threads>>>(mangnitudeImage,&h_min,&h_max,width,height);
+
+  normalize<<<blocks, threads>>>(mangnitudeImage, d_min, d_max, width, height);
   printf("normaliz\n");
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
-  floatToUchar4<<<blocks,threads>>>(mangnitudeImage,d_returnImage,width,height);
+  floatToUchar4<<<blocks, threads>>>(mangnitudeImage, d_returnImage, width, height);
   printf("float to char\n");
 
-  cudaMemcpy(returnImage,d_returnImage,width*height*sizeof(uchar4),cudaMemcpyDeviceToHost);
+  cudaMemcpy(returnImage, d_returnImage, width * height * sizeof(uchar4), cudaMemcpyDeviceToHost);
 
   cudaFree(d_returnImage);
   cudaFree(d_imageLoaded);
   cudaFree(complexImage);
+  cudaFree(shiftedComplexImage);
   cudaFree(d_min);
   cudaFree(d_max);
   printf("memory free\n");
-
 }
 
 void imageGaussianBlurWrapper(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height, int size, float sigma)
