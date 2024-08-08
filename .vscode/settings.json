@@ -57,6 +57,14 @@
         "thread": "cpp",
         "typeinfo": "cpp",
         "__nullptr": "cpp",
-        "ios": "cpp"
+        "ios": "cpp",
+        "any": "cpp",
+        "complex": "cpp",
+        "map": "cpp",
+        "set": "cpp",
+        "iomanip": "cpp",
+        "sstream": "cpp",
+        "variant": "cpp",
+        "cfloat": "cpp"
     }
 }

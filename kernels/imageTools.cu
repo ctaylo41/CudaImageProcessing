@@ -7,6 +7,12 @@
 #include <vector>
 #include <cfloat>
 #include <float.h>
+#include <ctime>
+#include <cstdlib>
+#include <cstdio>
+#include <cmath>
+
+#define TOLERANCE 1e-4
 
 struct Complex
 {
@@ -50,19 +56,24 @@ struct ComplexRGB
   __device__ __host__ ComplexRGB() : r(0, 0), g(0, 0), b(0, 0) {}
   __device__ __host__ ComplexRGB(Complex r, Complex g, Complex b) : r(r), g(g), b(b) {}
 
-  __device__ __host__ ComplexRGB operator+(const ComplexRGB &Other)
+  __device__ __host__ ComplexRGB operator+(const ComplexRGB &Other) const
   {
     return ComplexRGB{r + Other.r, g + Other.g, b + Other.b};
   }
 
-  __device__ __host__ ComplexRGB operator-(const ComplexRGB &Other)
+  __device__ __host__ ComplexRGB operator-(const ComplexRGB &Other) const
   {
     return ComplexRGB{r - Other.r, g - Other.g, b - Other.b};
   }
 
-  __device__ __host__ ComplexRGB operator*(const ComplexRGB &Other)
+  __device__ __host__ ComplexRGB operator*(const ComplexRGB &Other) const
   {
     return ComplexRGB{r * Other.r, g * Other.g, b * Other.b};
+  }
+
+  __device__ __host__ ComplexRGB operator*(const float &scalar) const
+  {
+    return ComplexRGB{r * scalar, g * scalar, b * scalar};
   }
 
   __device__ __host__ float3 magnitude() const
@@ -70,11 +81,17 @@ struct ComplexRGB
     return float3{r.magnitude(), g.magnitude(), b.magnitude()};
   }
 
-  __device__ __host__ ComplexRGB operator/(float scalar) {
-    return ComplexRGB(r/scalar,g/scalar,b/scalar);
+  __device__ __host__ ComplexRGB operator/(float scalar)
+  {
+    return ComplexRGB(r / scalar, g / scalar, b / scalar);
   }
 };
-
+bool compareComplexRGB(const ComplexRGB &a, const ComplexRGB &b)
+{
+  return (std::fabs(a.r.real - b.r.real) < TOLERANCE) &&
+         (std::fabs(a.g.real - b.g.real) < TOLERANCE) &&
+         (std::fabs(a.b.real - b.b.real) < TOLERANCE);
+}
 inline cudaError_t checkCuda(cudaError_t result)
 {
   if (result != cudaSuccess)
@@ -161,7 +178,27 @@ void imageLoadWrapper(unsigned char *image, uchar4 *imageLoaded, size_t imgSize)
   cudaFree(d_image);
   cudaFree(d_imageLoaded);
 }
+__global__ void printImage(ComplexRGB *data, int width, int height)
+{
+  int x = blockDim.x * blockIdx.x + threadIdx.x;
+  int y = blockDim.y * blockIdx.y + threadIdx.y;
+  if (x < width && y < height)
+  {
+    int idx = width * y + x;
+    printf("((%.3f,%.3f),(%.3f,%.3f),(%.3f,%.3f))\n", data[idx].r.real, data[idx].r.imag,data[idx].b.real,data[idx].b.imag, data[idx].g.real,data[idx].g.imag);
+  }
+}
 
+__global__ void printImage(Complex *data, int width, int height)
+{
+  int x = blockDim.x * blockIdx.x + threadIdx.x;
+  int y = blockDim.y * blockIdx.y + threadIdx.y;
+  if (x < width && y < height)
+  {
+    int idx = width * y + x;
+    printf("(%.4f,%.4f)\n",data[idx].real,data[idx].imag);
+  }
+}
 __global__ void imageGrayScale(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height)
 {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -383,7 +420,7 @@ __global__ void fft1D(ComplexRGB *data, int width, int height, int step, bool is
       ComplexRGB odd = data[2 * idx + 1 + idy * width];
       float angle = -2.0f * M_PI * idx / n;
       Complex twid = Complex(cosf(angle), sinf(angle));
-      ComplexRGB twiddle(twid,twid,twid);
+      ComplexRGB twiddle(twid, twid, twid);
       ComplexRGB temp = odd * twiddle;
       data[idx + idy * width] = even + temp;
       data[idx + n / 2 + idy * width] = even - temp;
@@ -398,7 +435,7 @@ __global__ void fft1D(ComplexRGB *data, int width, int height, int step, bool is
       ComplexRGB odd = data[idx + (2 * idy + 1) * width];
       float angle = -2.0f * M_PI * idy / n;
       Complex twid = Complex(cosf(angle), sinf(angle));
-      ComplexRGB twiddle(twid,twid,twid);
+      ComplexRGB twiddle(twid, twid, twid);
       ComplexRGB temp = odd * twiddle;
       data[idx + idy * width] = even + temp;
       data[idx + (idy + n / 2) * width] = even - temp;
@@ -406,8 +443,13 @@ __global__ void fft1D(ComplexRGB *data, int width, int height, int step, bool is
   }
 }
 
-void fftImage(ComplexRGB *data, int width, int height)
-{
+void fftImage(ComplexRGB *data, int width, int height) {
+int threadsPerBlock = 16;
+  int numBlocksX = (width + threadsPerBlock - 1) / threadsPerBlock;
+  int numBlocksY = (height + threadsPerBlock - 1) / threadsPerBlock;
+  dim3 blocks(numBlocksX, numBlocksY);
+  dim3 threads(threadsPerBlock, threadsPerBlock);
+
   dim3 block(16, 16);
   dim3 gridRow((width + block.x - 1) / block.x, height); // Changed this
   dim3 gridCol(width, (height + block.y - 1) / block.y); // Changed this
@@ -418,7 +460,11 @@ void fftImage(ComplexRGB *data, int width, int height)
     cudaDeviceSynchronize();
     checkCuda(cudaGetLastError());
   }
-  printf("rows done\n");
+
+  printImage<<<blocks,threads>>>(data,width,height);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
   for (int step = 1; step < height; step *= 2)
   {
     fft1D<<<gridCol, block>>>(data, width, height, step, false);
@@ -441,11 +487,11 @@ __global__ void ifft1D(ComplexRGB *data, int width, int height, int step, bool i
       ComplexRGB even = data[2 * idx + idy * width];
       ComplexRGB odd = data[2 * idx + 1 + idy * width];
       float angle = 2.0f * M_PI * idx / n;
-      Complex twid = Complex(cosf(angle), sinf(angle));
-      ComplexRGB twiddle(twid,twid,twid);
+      Complex twid = Complex{cosf(angle), sinf(angle)};
+      ComplexRGB twiddle{twid, twid, twid};
       ComplexRGB temp = odd * twiddle;
-      data[idx + idy * width] = (even + temp) / n;
-      data[idx + n / 2 + idy * width] = (even - temp) / n;
+      data[idx + idy * width] = (even + temp);
+      data[idx + n / 2 + idy * width] = (even - temp);
     }
   }
   else
@@ -456,11 +502,11 @@ __global__ void ifft1D(ComplexRGB *data, int width, int height, int step, bool i
       ComplexRGB even = data[idx + (2 * idy) * width];
       ComplexRGB odd = data[idx + (2 * idy + 1) * width];
       float angle = 2.0f * M_PI * idy / n;
-      Complex twid = Complex(cosf(angle), sinf(angle));
-      ComplexRGB twiddle(twid, twid, twid);
+      Complex twid = Complex{cosf(angle), sinf(angle)};
+      ComplexRGB twiddle{twid, twid, twid};
       ComplexRGB temp = odd * twiddle;
-      data[idx + idy * width] = (even + temp) / n;
-      data[idx + (idy + n / 2) * width] = (even - temp) / n;
+      data[idx + idy * width] = (even + temp);
+      data[idx + (idy + n / 2) * width] = (even - temp);
     }
   }
 }
@@ -514,6 +560,9 @@ void fftImage(Complex *data, int width, int height)
     checkCuda(cudaGetLastError());
   }
   printf("rows done\n");
+  printImage<<<block,gridRow>>>(data,width,height);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
   for (int step = 1; step < height; step *= 2)
   {
     fft1D<<<gridCol, block>>>(data, width, height, step, false);
@@ -543,6 +592,20 @@ void ifftImage(Complex *data, int width, int height)
   }
 }
 
+__global__ void normalizeComplex(ComplexRGB *data, float scalar, int width, int height)
+{
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if (x < width && y < height)
+  {
+    int idx = y * width + x;
+    data[idx].r = data[idx].r * scalar;
+    data[idx].g = data[idx].g * scalar;
+    data[idx].b = data[idx].b * scalar;
+  }
+}
+
 void ifftImage(ComplexRGB *data, int width, int height)
 {
   dim3 block(16, 16);
@@ -562,6 +625,16 @@ void ifftImage(ComplexRGB *data, int width, int height)
     cudaDeviceSynchronize();
     checkCuda(cudaGetLastError());
   }
+  int threadsPerBlock = 16;
+  int numBlocksX = (width + threadsPerBlock - 1) / threadsPerBlock;
+  int numBlocksY = (height + threadsPerBlock - 1) / threadsPerBlock;
+  dim3 blocks(numBlocksX, numBlocksY);
+  dim3 threads(threadsPerBlock, threadsPerBlock);
+
+  float scalar = 1.0f / (width * height);
+  normalizeComplex<<<blocks, threads>>>(data, scalar, width, height);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
 }
 
 __global__ void grayScaleToComplex(uchar4 *imageGrayScale, Complex *imageComplex, int width, int height)
@@ -725,12 +798,11 @@ __global__ void complexToFloat(Complex *input, float *output, int width, int hei
   }
 }
 
-void putBackTogether(uchar4* output, uchar4* input, int width, int height) {
-  ComplexRGB* d_image;
-  
-  checkCuda(cudaMallocManaged(&d_image,width*height*sizeof(ComplexRGB)));
+void putBackTogether(uchar4 *output, uchar4 *input, int width, int height)
+{
+  ComplexRGB *d_image;
 
-
+  checkCuda(cudaMallocManaged(&d_image, width * height * sizeof(ComplexRGB)));
 }
 
 void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height)
@@ -828,17 +900,16 @@ void imageGaussianBlurWrapper(uchar4 *returnImage, uchar4 *imageLoaded, int widt
   free(kernal);
 }
 
-__global__ void uchar4ToComplexRGB(uchar4* image, ComplexRGB* complexImage, int width, int height) {
+__global__ void uchar4ToComplexRGB(uchar4 *image, ComplexRGB *complexImage, int width, int height)
+{
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
-  if(x<width && y<height) {
+  if (x < width && y < height)
+  {
     int idx = y * width + x;
-    complexImage[idx].r = image[idx].x;
-    complexImage[idx].g = image[idx].y;
-    complexImage[idx].b = image[idx].z;
+    complexImage[idx] = ComplexRGB{Complex{static_cast<float>(image[idx].x), 0}, Complex{static_cast<float>(image[idx].y), 0}, Complex{static_cast<float>(image[idx].z), 0}};
   }
 }
-
 __global__ void applyLowPassFilter(Complex *data, int width, int height, float cutoff)
 {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -856,7 +927,7 @@ __global__ void applyLowPassFilter(Complex *data, int width, int height, float c
   }
 }
 
-__global__ void applyLowPassFilter(ComplexRGB* data, int width, int height, float cutoff)
+__global__ void applyLowPassFilter(ComplexRGB *data, int width, int height, float cutoff)
 {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -864,8 +935,10 @@ __global__ void applyLowPassFilter(ComplexRGB* data, int width, int height, floa
   if (x < width && y < height)
   {
     int idx = y * width + x;
+
     float dist = sqrtf((x - width / 2) * (x - width / 2) + (y - height / 2) * (y - height / 2));
-    if(dist > cutoff) {
+    if (dist < cutoff)
+    {
       data[idx].r.real = 0.0f;
       data[idx].r.imag = 0.0f;
       data[idx].g.real = 0.0f;
@@ -876,11 +949,13 @@ __global__ void applyLowPassFilter(ComplexRGB* data, int width, int height, floa
   }
 }
 
-__global__ void complexRGBToUchar4(ComplexRGB* input, uchar4* output, int width, int height) {
+__global__ void complexRGBToUchar4(ComplexRGB *input, uchar4 *output, int width, int height)
+{
   int x = blockDim.x * blockIdx.x + threadIdx.x;
   int y = blockDim.y * blockIdx.y + threadIdx.y;
 
-  if(x < width && y < height) {
+  if (x < width && y < height)
+  {
     int idx = y * width + x;
     output[idx].x = static_cast<unsigned char>(input[idx].r.real);
     output[idx].y = static_cast<unsigned char>(input[idx].g.real);
@@ -889,102 +964,98 @@ __global__ void complexRGBToUchar4(ComplexRGB* input, uchar4* output, int width,
   }
 }
 
-void compressImage(uchar4* outputImage,uchar4* inputImage, int width, int height) {
-  ComplexRGB* complexImage;
-  uchar4* d_image;
-  uchar4* compressedImage;
+
+
+void compressImage(uchar4 *outputImage, uchar4 *inputImage, int width, int height)
+{
+  ComplexRGB *complexImage;
+  uchar4 *d_image;
+  uchar4 *compressedImage;
   int threadsPerBlock = 16;
   int numBlocksX = (width + threadsPerBlock - 1) / threadsPerBlock;
   int numBlocksY = (height + threadsPerBlock - 1) / threadsPerBlock;
   dim3 blocks(numBlocksX, numBlocksY);
   dim3 threads(threadsPerBlock, threadsPerBlock);
-  checkCuda(cudaMalloc(&complexImage,width*height*sizeof(ComplexRGB)));
-  checkCuda(cudaMalloc(&compressedImage,width*height*sizeof(uchar4)));
-  checkCuda(cudaMalloc(&d_image,width*height*sizeof(uchar4)));
-  checkCuda(cudaMemcpy(d_image,inputImage,width*height*sizeof(uchar4),cudaMemcpyHostToDevice));
-  uchar4ToComplexRGB<<<blocks,threads>>>(d_image,complexImage,width,height);
+  checkCuda(cudaMalloc(&complexImage, width * height * sizeof(ComplexRGB)));
+  checkCuda(cudaMalloc(&compressedImage, width * height * sizeof(uchar4)));
+  checkCuda(cudaMalloc(&d_image, width * height * sizeof(uchar4)));
+  checkCuda(cudaMemcpy(d_image, inputImage, width * height * sizeof(uchar4), cudaMemcpyHostToDevice));
+  uchar4ToComplexRGB<<<blocks, threads>>>(d_image, complexImage, width, height);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
+  
 
-  fftImage(complexImage,width,height);
+  fftImage(complexImage, width, height);
+  printImage<<<blocks,threads>>>(complexImage,width,height);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+  
+  
   float max_distance = sqrtf((width / 2) * (width / 2) + (height / 2) * (height / 2));
   float cutoff = 0.15f * max_distance; // 15% of the maximum distance
-
-  applyLowPassFilter<<<blocks,threads>>>(complexImage,width,height,cutoff);
+  ifftImage(complexImage, width, height);
+  complexRGBToUchar4<<<blocks,threads>>>(complexImage,compressedImage,width,height);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
-  ifftImage(complexImage,width,height);
-
-  complexRGBToUchar4<<<blocks,threads>>>(complexImage,compressedImage,width,height);
-  checkCuda(cudaMemcpy(outputImage,compressedImage,width*height*sizeof(uchar4),cudaMemcpyDeviceToHost));
+  checkCuda(cudaMemcpy(outputImage, compressedImage, width * height * sizeof(uchar4), cudaMemcpyDeviceToHost));
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 }
 
 bool test()
 {
-  int width = 2;
-  int height = 2;
-  Complex *image = (Complex *)malloc(width * height * sizeof(Complex));
-  image[0] = Complex{85, 0};
-  image[1] = Complex{175, 0};
-  image[2] = Complex{24, 0};
-  image[3] = Complex{98, 0};
-  Complex *image_device;
-  Complex *shifted;
-  checkCuda(cudaMallocManaged(&image_device, width * height * sizeof(Complex)));
-  checkCuda(cudaMallocManaged(&shifted, width * height * sizeof(Complex)));
-
-  checkCuda(cudaMemcpy(image_device, image, width * height * sizeof(Complex), cudaMemcpyHostToDevice));
-  checkCuda(cudaMemcpy(shifted, image, width * height * sizeof(Complex), cudaMemcpyHostToDevice));
-  dim3 block(16, 16);
-  dim3 gridRow((width + block.x - 1) / block.x, height); // Changed this
-  dim3 gridCol(width, (height + block.y - 1) / block.y); // Changed this
-
-  for (int step = 1; step < width; step *= 2)
-  {
-    fft1D<<<gridRow, block>>>(image_device, width, height, step, true);
-    cudaDeviceSynchronize();
-    checkCuda(cudaGetLastError());
-  }
-  for (int step = 1; step < width; step *= 2)
-  {
-    fft1D<<<gridRow, block>>>(image_device, width, height, step, false);
-    cudaDeviceSynchronize();
-    checkCuda(cudaGetLastError());
-  }
-  /*
+  
+  std::srand(std::time(nullptr));
+  int width = 4;
+  int height = 4;
   int threadsPerBlock = 16;
   int numBlocksX = (width + threadsPerBlock - 1) / threadsPerBlock;
   int numBlocksY = (height + threadsPerBlock - 1) / threadsPerBlock;
   dim3 blocks(numBlocksX, numBlocksY);
   dim3 threads(threadsPerBlock, threadsPerBlock);
-
-  fftShift<<<blocks,threads>>>(image_device, shifted, width, height);
+  Complex *image = (Complex *)malloc(width * height * sizeof(Complex));   
+  image[0] = Complex{154,0};
+  image[1] = Complex{122,0};
+  image[2] = Complex{27,0};
+  image[3] = Complex{138,0};
+  image[4] = Complex{4,0};
+  image[5] = Complex{145,0};
+  image[6] = Complex{192,0};
+  image[7] = Complex{121,0};
+  image[8] = Complex{237,0};
+  image[9] = Complex{221,0};
+  image[10] = Complex{181,0};
+  image[11] = Complex{173,0};
+  image[12] = Complex{113,0};
+  image[13] = Complex{67,0};
+  image[14] = Complex{188,0};
+  image[15] = Complex{79,0};
+  Complex *image_device;
+  Complex *shifted;
+  checkCuda(cudaMallocManaged(&image_device, width * height * sizeof(Complex)));
+  checkCuda(cudaMallocManaged(&shifted, width * height * sizeof(Complex)));
+  checkCuda(cudaMemcpy(image_device, image, width * height * sizeof(Complex), cudaMemcpyHostToDevice));
+  checkCuda(cudaMemcpy(shifted, image, width * height * sizeof(Complex), cudaMemcpyHostToDevice));
+  dim3 block(16, 16);
+  dim3 gridRow((width + block.x - 1) / block.x, height); // Changed this
+  dim3 gridCol(width, (height + block.y - 1) / block.y); // Changed this
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
-  */
-  for (int step = 1; step < width; step *= 2)
-  {
-    ifft1D<<<gridRow, block>>>(image_device, width, height, step, true);
-    cudaDeviceSynchronize();
-    checkCuda(cudaGetLastError());
-  }
-  for (int step = 1; step < width; step *= 2)
-  {
-    ifft1D<<<gridRow, block>>>(image_device, width, height, step, false);
-    cudaDeviceSynchronize();
-    checkCuda(cudaGetLastError());
-  }
+  fftImage(image_device, width, height);
+  printf("done fft\n");
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
 
-  Complex *host_image = (Complex *)malloc(width * height * sizeof(Complex));
+
+  ifftImage(image_device, width, height);
+  printf("\n");
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+  Complex *host_image = (Complex *)malloc(width * height * sizeof(ComplexRGB));
 
   checkCuda(cudaMemcpy(host_image, shifted, width * height * sizeof(Complex), cudaMemcpyDeviceToHost));
-  for (int i = 0; i < width * height; i++)
-  {
-    printf("(%.4f,%.4f)\n", host_image[i].real, host_image[i].imag);
-  }
+  bool isSame = true;
   free(host_image);
   cudaFree(image);
   cudaFree(shifted);
