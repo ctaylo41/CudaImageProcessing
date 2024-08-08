@@ -14,6 +14,7 @@ void imageSobelEdgeWrapper(uchar4* returnImage, uchar4* imageLoaded, int width, 
 void imageGaussianBlurWrapper(uchar4* returnImage, uchar4* imageLoaded, int width, int height, int kernalSize, float sigma);
 void imageMeanBlurWrapper(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height);
 void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height);
+void compressImage(uchar4* outputImage,uchar4* inputImage, int width, int height);
 float* generateGaussianKernal(int kernalSize, float sigma);
 bool test();
 #endif // IMAGETOOLS_H
