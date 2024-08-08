@@ -339,33 +339,24 @@ __global__ void fft1D(Complex *data, int width, int height, int step, bool isRow
 
   if (isRow) {
     if (idx < n / 2 && idy < height) {
-      int i = idy * width + idx;
-      if ((2 * i * step + step) < (width * height)) {
-        Complex even = data[2 * i * step];
-        Complex odd = data[2 * i * step + step];
+        Complex even = data[2 * idx + idy * width];
+        Complex odd = data[2 * idx + 1 + idy * width];
         float angle = -2.0f * M_PI * idx / n;
         Complex twiddle(cosf(angle), sinf(angle));
         Complex temp = odd * twiddle;
-        data[i * step] = even + temp;
-        if (i + n / 2 < width * height / step) {
-          data[(i + n / 2) * step] = even - temp;
-        }
-      }
+        data[idx + idy * width] = even + temp;
+        data[idx + n / 2 + idy * width] = even - temp;
     }
   } else {
     if (idx < width && idy < n / 2) {
       int i = idx * width + idy;
-      if ((2 * i * step + step) < (width * height)) {
-        Complex even = data[2 * i * step];
-        Complex odd = data[2 * i * step + step];
+        Complex even = data[idx + (2 * idy) * width];
+        Complex odd = data[idx + (2 * idy + 1) * width];
         float angle = -2.0f * M_PI * idy / n;
         Complex twiddle(cosf(angle), sinf(angle));
         Complex temp = odd * twiddle;
-        data[i * step] = even + temp;
-        if (i + n / 2 < width * height / step) {
-          data[(i + n / 2) * step] = even - temp;
-        }
-      }
+        data[idx + idy * width] = even + temp;
+        data[idx + (idy + n/2)*width] = even - temp;
     }
   }
 }
@@ -658,6 +649,72 @@ void imageGaussianBlurWrapper(uchar4 *returnImage, uchar4 *imageLoaded, int widt
   cudaFree(d_imageLoaded);
   cudaFree(d_kernal);
   free(kernal);
+}
+
+__global__ void applyLowPassFilter(Complex* data, int width, int height, float cutoff) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if(x < width && y < height) {
+    int idx = y * width + x;
+    float dist = sqrtf((x-width/2)*(x-width/2)+(y-height/2)*(y-height/2));
+    if(dist > cutoff) {
+      data[idx].real = 0.0f;
+      data[idx].imag = 0.0f;
+    }
+  }
+}
+
+
+
+bool test() {
+  int width = 2;
+  int height = 2;
+  Complex* image = (Complex*)malloc(width*height*sizeof(Complex));
+  image[0] = Complex{85,0};
+  image[1] = Complex{175,0};
+  image[2] = Complex{24,0};
+  image[3] = Complex{98,0};
+  Complex* image_device;
+  Complex* shifted;
+  checkCuda(cudaMallocManaged(&image_device, width * height * sizeof(Complex)));
+  checkCuda(cudaMallocManaged(&shifted, width * height * sizeof(Complex)));
+
+  checkCuda(cudaMemcpy(image_device,image,width*height*sizeof(Complex),cudaMemcpyHostToDevice));
+  checkCuda(cudaMemcpy(shifted,image,width*height*sizeof(Complex),cudaMemcpyHostToDevice));
+  dim3 block(16, 16);
+  dim3 gridRow((width + block.x - 1) / block.x, height); // Changed this
+  dim3 gridCol(width, (height + block.y - 1) / block.y); // Changed this
+
+  for (int step = 1; step < width; step *= 2)
+  {
+    fft1D<<<gridRow, block>>>(image_device, width, height, step, true);
+    cudaDeviceSynchronize();
+    checkCuda(cudaGetLastError());
+  }
+  for (int step = 1; step < width; step *= 2)
+  {
+    fft1D<<<gridRow, block>>>(image_device, width, height, step, false);
+    cudaDeviceSynchronize();
+    checkCuda(cudaGetLastError());
+  }
+  int threadsPerBlock = 16;
+  int numBlocksX = (width + threadsPerBlock - 1) / threadsPerBlock;
+  int numBlocksY = (height + threadsPerBlock - 1) / threadsPerBlock;
+  dim3 blocks(numBlocksX, numBlocksY);
+  dim3 threads(threadsPerBlock, threadsPerBlock);
+
+  fftShift<<<blocks,threads>>>(image_device, shifted, width, height);
+  Complex* host_image = (Complex*)malloc(width*height*sizeof(Complex));
+  checkCuda(cudaMemcpy(host_image,shifted,width*height*sizeof(Complex),cudaMemcpyDeviceToHost));
+  for(int i=0;i<width*height;i++) {
+    printf("(%.4f,%.4f)\n",host_image[i].real,host_image[i].imag);
+  }
+  free(host_image);
+  cudaFree(image);
+  cudaFree(shifted);
+  cudaFree(image_device);
+  return true;
 }
 
 void imageMeanBlurWrapper(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height)

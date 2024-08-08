@@ -15,4 +15,5 @@ void imageGaussianBlurWrapper(uchar4* returnImage, uchar4* imageLoaded, int widt
 void imageMeanBlurWrapper(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height);
 void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height);
 float* generateGaussianKernal(int kernalSize, float sigma);
+bool test();
 #endif // IMAGETOOLS_H

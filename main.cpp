@@ -28,7 +28,7 @@ uchar4* loadImage(const char* filename,int* width, int *height) {
 int main(int, char**){
     int width; 
     int height;
-
+    test();
     uchar4* img = loadImage("/home/paperspace/CudaImageProcessing/image/thumb.gif",&width,&height);
     std::cout << "\nload image\n" << std::endl;
 
