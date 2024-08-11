@@ -1012,20 +1012,25 @@ __global__ void bitReversalKernel(Complex* data, int rows,int cols) {
   }
 }
 
-__global__ void fftKernel(Complex* data, int N, int len) {
-  int i = blockIdx.x * len + threadIdx.x;
-  int j = threadIdx.x;
-  if( i < N && j < len/2) {
-    float angle  = 2*M_PI/len;
-    Complex wlen = Complex{cos(angle),sin(angle)};
-    Complex w = Complex{1,0};
-    for (int k = 0;k<j;k++) {
-      w = w * wlen;
+__global__ void fftKernel(Complex* data, int width,int height) {
+  int row = blockIdx.x*blockDim.x+threadIdx.x;
+  if(row<height) {
+    printf("%d\n",row);
+    Complex* rowData = data+row*width;
+    for(int len=2;len<=width;len<<=1) {
+      float angle = -2 * M_PI/len;
+      Complex wlen = {cosf(angle),sinf(angle)};
+      for(int i=0;i<width;i+=len) {
+        Complex w = {1,0};
+        for(int j=0;j<len/2;j++) {
+          Complex u = rowData[i+j];
+          Complex v = rowData[i+j+len/2]*w;
+          rowData[i+j] = u+v;
+          rowData[i+j+len/2] = u-v;
+          w = w*wlen;
+        }
+      }
     }
-    Complex u = data[i+j];
-    Complex v = data[i+j+len/2]*w;
-    data[i+j]=u+v;
-    data[i+j+len/2]=u-v;
   }
 }
 
@@ -1069,8 +1074,8 @@ void compressImage(uchar4 *outputImage, uchar4 *inputImage, int width, int heigh
 bool test()
 {
   std::srand(std::time(nullptr));
-  int width = 8;
-  int height = 1;
+  int width = 4;
+  int height = 2;
   Complex *image = (Complex*)malloc(width*height*sizeof(Complex));   
   Complex *d_image;
   checkCuda(cudaMalloc(&d_image,width*height*sizeof(Complex)));
@@ -1088,13 +1093,12 @@ bool test()
   bitReversalKernel<<<gridSize,blockSize>>>(d_image,height,width);
   checkCuda(cudaGetLastError());
   cudaDeviceSynchronize();
-  for (int stride = 1; stride < width; stride *= 2) {
-        for (int offset = 0; offset < stride; ++offset) {
-            fftKernel<<<(width / 2 + 255) / 256, 256>>>(d_image, width, stride, offset);
-            cudaDeviceSynchronize();
-        }
-  }
-
+  printImage<<<blockSize,gridSize>>>(d_image,width,height);
+  checkCuda(cudaGetLastError());
+  cudaDeviceSynchronize();
+  fftKernel<<<blockSize.x,gridSize.x>>>(d_image,width,height);
+  checkCuda(cudaGetLastError());
+  cudaDeviceSynchronize();
   Complex* r_image = (Complex*)malloc(width*height*sizeof(Complex));
   printf("bruh\n");
 
