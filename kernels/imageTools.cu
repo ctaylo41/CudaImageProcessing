@@ -1034,6 +1034,20 @@ __global__ void fftKernel(Complex* data, int width,int height) {
   }
 }
 
+__global__ void transpose(Complex* data,int width,int height) {
+  extern __shared__ Complex sharedTranpose[];
+
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if(x<width && y<height) {
+    sharedTranpose[threadIdx.y*blockDim.x + threadIdx.x] = data[y*width+x];
+    __syncthreads();
+    int transposedIndex = x * height + y;
+    data[transposedIndex] = sharedTranpose[threadIdx.y*blockDim.x+threadIdx.x];
+  }
+}
+
 void compressImage(uchar4 *outputImage, uchar4 *inputImage, int width, int height)
 {
   ComplexRGB *complexImage;
@@ -1090,15 +1104,26 @@ bool test()
   checkCuda(cudaMemcpy(d_image,image,width*height*sizeof(Complex),cudaMemcpyHostToDevice));
   dim3 blockSize(256,1);
   dim3 gridSize((width+blockSize.x-1)/blockSize.x,height); 
-  bitReversalKernel<<<gridSize,blockSize>>>(d_image,height,width);
+  //bitReversalKernel<<<gridSize,blockSize>>>(d_image,height,width);
+  //checkCuda(cudaGetLastError());
+  //cudaDeviceSynchronize();
+  //fftKernel<<<blockSize.x,gridSize.x>>>(d_image,width,height);
+  //checkCuda(cudaGetLastError());
+  //cudaDeviceSynchronize();
+  size_t sharedMemSize = width*height*sizeof(Complex);
+
+  transpose<<<gridSize,blockSize,sharedMemSize>>>(d_image,width,height);
   checkCuda(cudaGetLastError());
   cudaDeviceSynchronize();
   printImage<<<blockSize,gridSize>>>(d_image,width,height);
+  printf("done\n");
+
   checkCuda(cudaGetLastError());
   cudaDeviceSynchronize();
-  fftKernel<<<blockSize.x,gridSize.x>>>(d_image,width,height);
+  fftKernel<<<blockSize.x,gridSize.x>>>(d_image,height,width);
   checkCuda(cudaGetLastError());
   cudaDeviceSynchronize();
+  transpose<<<gridSize,blockSize,sharedMemSize>>>(d_image,height,width);
   Complex* r_image = (Complex*)malloc(width*height*sizeof(Complex));
   printf("bruh\n");
 
