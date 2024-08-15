@@ -28,20 +28,21 @@ uchar4* loadImage(const char* filename,int* width, int *height) {
 int main(int, char**){
     int width; 
     int height;
-    test();
+    //test();
     //std::cout << "test" << std::endl;
 
     uchar4* img = loadImage("/home/paperspace/CudaImageProcessing/image/thumb.gif",&width,&height);
     std::cout << "load image" << std::endl;
-
+cudaDeviceProp deviceProp;
+    int device;
     //imageGrayScaleWrapper(img,img,width,height);
     //imageSobelEdgeWrapper(img,img,width,height);
     //imageWriteWrapper("/home/paperspace/CudaImageProcessing/image/output.jpg",img,width,height);
     //imageGaussianBlurWrapper(img,img,width,height,3,7.0);
     //imageMeanBlurWrapper(img,img,width,height);
-    //imageFFTImageGenerate(img,img,width,height);
+    imageFFTImageGenerate(img,img,width,height);
     //compressImage(img,img,width,height);
-    //imageWriteWrapper("/home/paperspace/CudaImageProcessing/image/output.jpg",img,width,height);
+    imageWriteWrapper("/home/paperspace/CudaImageProcessing/image/output.jpg",img,width,height);
     delete[] img;
     return 0;
 }
