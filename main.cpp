@@ -43,6 +43,7 @@ cudaDeviceProp deviceProp;
     imageFFTImageGenerate(img,img,width,height);
     //compressImage(img,img,width,height);
     imageWriteWrapper("/home/paperspace/CudaImageProcessing/image/output.jpg",img,width,height);
+
     delete[] img;
     return 0;
 }
