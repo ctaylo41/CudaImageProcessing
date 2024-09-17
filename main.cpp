@@ -33,7 +33,7 @@ int main(int, char**){
 
     uchar4* img = loadImage("/home/paperspace/CudaImageProcessing/image/thumb.gif",&width,&height);
     std::cout << "load image" << std::endl;
-cudaDeviceProp deviceProp;
+    cudaDeviceProp deviceProp;
     int device;
     //imageGrayScaleWrapper(img,img,width,height);
     //imageSobelEdgeWrapper(img,img,width,height);

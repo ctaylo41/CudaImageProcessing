@@ -94,7 +94,7 @@ bool compareComplexRGB(const ComplexRGB &a, const ComplexRGB &b)
          (std::fabs(a.g.real - b.g.real) < TOLERANCE) &&
          (std::fabs(a.b.real - b.b.real) < TOLERANCE);
 }
-inline cudaError_t checkCuda(cudaError_t result)
+cudaError_t checkCuda(cudaError_t result)
 {
   if (result != cudaSuccess)
   {
@@ -181,6 +181,13 @@ void imageLoadWrapper(unsigned char *image, uchar4 *imageLoaded, size_t imgSize)
   cudaFree(d_image);
   cudaFree(d_imageLoaded);
 }
+
+struct rgbCufft {
+  cufftComplex* red;
+  cufftComplex* blue;
+  cufftComplex* green;
+};
+
 __device__ void printImage(Complex *data, int width, int height)
 {
   
@@ -191,8 +198,20 @@ __device__ void printImage(Complex *data, int width, int height)
     }
   }
 }
+
+
+__device__ void printImage(rgbCufft data,int width, int height) {
+  for(int i = 0;i<width*height;i++) {
+    printf("(%.4f,%.4f,%.4f)\n", data.red[i].x, data.green[i].x, data.blue[i].x);
+  }
+}
+
 __global__ void printImageKernel(Complex *data, int width, int height) {
     printImage(data, width, height);
+}
+
+__global__ void printImageKernel(rgbCufft data, int width, int height) {
+    printImage(data,width,height);
 }
 
 __global__ void imageGrayScale(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height)
@@ -482,63 +501,71 @@ void imageGaussianBlurWrapper(uchar4 *returnImage, uchar4 *imageLoaded, int widt
   free(kernal);
 }
 
-struct rgbCufft {
-  cufftComplex* red;
-  cufftComplex* blue;
-  cufftComplex* green;
-  rgbCufft(int width, int height) {
-    size_t size = width*height*sizeof(cufftComplex);
-    checkCuda(cudaMalloc(&red,size));
-    checkCuda(cudaMalloc(&blue,size));
-    checkCuda(cudaMalloc(&green,size));
-  }
-  ~rgbCufft() {
-    cudaFree(red);
-    cudaFree(blue);
-    cudaFree(green);
-  }
-};
 
-__global__ void uchar4ToCufftComplex(rgbCufft complexImage, uchar4* ucharImage, int width,int height) {
+
+__global__ void uchar4ToCufftComplex(cufftComplex* color, uchar4* ucharImage, int width,int height) {
   int x = blockIdx.x*blockDim.x+threadIdx.x;
   int y = blockIdx.y*blockDim.y+threadIdx.y;
   if(x<width && y<height) {
     int idx = width*y+x;
-    complexImage.red[idx] = make_float2(static_cast<float>(ucharImage[idx].x),0.0f);
-    complexImage.green[idx] = make_float2(static_cast<float>(ucharImage[idx].y),0.0f);
-    complexImage.blue[idx] = make_float2(static_cast<float>(ucharImage[idx].z),0.0f);
+    color[idx] = make_float2(static_cast<float>(ucharImage[idx].x),0.0f);
     //printf("(%.4f,%.4f,%.4f)\n",complexImage.red[idx].x,complexImage.green[idx].x,complexImage.blue[idx].x);
   }
 }
 
-__global__ void ComplexRGBToUchar(rgbCufft complexImage, uchar4* returnImage,int width,int height) {
+__global__ void ComplexRGBToUchar(cufftComplex* color, uchar4* returnImage,int width,int height) {
   int x = blockIdx.x*blockDim.x+threadIdx.x;
   int y = blockIdx.y*blockDim.y+threadIdx.y;
   if(x<width && y<height) {
     int idx = y * width + x;
-    returnImage[idx].x = static_cast<unsigned char>(complexImage.red[idx].x);
-    returnImage[idx].y = static_cast<unsigned char>(complexImage.green[idx].x);
-    returnImage[idx].z = static_cast<unsigned char>(complexImage.blue[idx].x);
+    returnImage[idx].x = static_cast<unsigned char>(color[idx].x);
+    returnImage[idx].y = static_cast<unsigned char>(color[idx].x);
+    returnImage[idx].z = static_cast<unsigned char>(color[idx].x);
     returnImage[idx].w = 255;
-    printf("(%.4f,%.4f,%.4f)\n",complexImage.red[idx].y,complexImage.green[idx].y,complexImage.blue[idx].y);
+    printf("(%.4f,%.4f,%.4f)\n",color[idx].x,color[idx].x,color[idx].x);
   }
 }
 
  void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height) {
   uchar4* d_image;
-  rgbCufft complexImage = rgbCufft(width,height);
-  rgbCufft outComplexImage(width,height);
+  rgbCufft complexImage;
   int threadsPerBlock = 16;
   int numBlocksX = (width + threadsPerBlock - 1) / threadsPerBlock;
   int numBlocksY = (height + threadsPerBlock - 1) / threadsPerBlock;
   dim3 blocks(numBlocksX, numBlocksY);
   dim3 threads(threadsPerBlock, threadsPerBlock);
+  cufftComplex* red;
+  cufftComplex* green;
+  cufftComplex* blue;
+
+  cufftComplex* redOut;
+  cufftComplex* greenOut;
+  cufftComplex* blueOut;
+
+  cudaMalloc(&red,width*height*sizeof(cufftComplex));
+  cudaMalloc(&blue,width*height*sizeof(cufftComplex));
+  cudaMalloc(&green,width*height*sizeof(cufftComplex));
+
+  cudaMalloc(&redOut,width*height*sizeof(cufftComplex));
+  cudaMalloc(&blueOut,width*height*sizeof(cufftComplex));
+  cudaMalloc(&greenOut,width*height*sizeof(cufftComplex));
+
+  complexImage.red = red;
+  complexImage.blue = blue;
+  complexImage.green = green;
 
   cudaMalloc(&d_image,width*height*sizeof(uchar4));
-
   cudaMemcpy(d_image,imageLoaded,width*height*sizeof(uchar4),cudaMemcpyHostToDevice);
 
-  uchar4ToCufftComplex<<<blocks,threads>>>(complexImage,d_image,width,height);
+  uchar4ToCufftComplex<<<blocks,threads>>>(red,d_image,width,height);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
+  uchar4ToCufftComplex<<<blocks,threads>>>(blue,d_image,width,height);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
+  uchar4ToCufftComplex<<<blocks,threads>>>(green,d_image,width,height);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
@@ -547,31 +574,39 @@ __global__ void ComplexRGBToUchar(rgbCufft complexImage, uchar4* returnImage,int
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
-  cufftExecC2C(plan,complexImage.red,complexImage.red,CUFFT_FORWARD);
+  cufftExecC2C(plan,red,redOut,CUFFT_FORWARD);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
-  cufftExecC2C(plan,complexImage.green,complexImage.green,CUFFT_FORWARD);
+  cufftExecC2C(plan,green,greenOut,CUFFT_FORWARD);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
-  cufftExecC2C(plan,complexImage.blue,complexImage.blue,CUFFT_FORWARD);
+  cufftExecC2C(plan,blue,blueOut,CUFFT_FORWARD);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
-  cufftExecC2C(plan,complexImage.red,complexImage.red,CUFFT_INVERSE);
-  cudaDeviceSynchronize();
-    checkCuda(cudaGetLastError());
+  //printImageKernel<<<1,1>>>(complexImage,width,height);
 
-  cufftExecC2C(plan,complexImage.green,complexImage.green,CUFFT_INVERSE);
+  cufftExecC2C(plan,redOut,red,CUFFT_INVERSE);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
-  cufftExecC2C(plan,complexImage.blue,complexImage.blue,CUFFT_INVERSE);
+  cufftExecC2C(plan,greenOut,green,CUFFT_INVERSE);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
-  ComplexRGBToUchar<<<blocks,threads>>>(complexImage,d_image,width,height);
+  cufftExecC2C(plan,blueOut,blue,CUFFT_INVERSE);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
+  ComplexRGBToUchar<<<blocks,threads>>>(red,d_image,width,height);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+  ComplexRGBToUchar<<<blocks,threads>>>(blue,d_image,width,height);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+  ComplexRGBToUchar<<<blocks,threads>>>(green,d_image,width,height);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
   printf("to complex struct\n");
