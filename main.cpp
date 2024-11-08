@@ -31,7 +31,7 @@ int main(int, char**){
     //test();
     //std::cout << "test" << std::endl;
 
-    uchar4* img = loadImage("/home/paperspace/CudaImageProcessing/image/thumb.gif",&width,&height);
+    uchar4* img = loadImage("/home/paperspace/CudaImageProcessing/image/lord.jpeg",&width,&height);
     std::cout << "load image" << std::endl;
     cudaDeviceProp deviceProp;
     int device;
