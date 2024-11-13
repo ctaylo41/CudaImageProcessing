@@ -527,34 +527,38 @@ __global__ void ComplexRGBToUchar(cufftComplex* red, cufftComplex* green, cufftC
 }
 
 
-__global__ void highpassFilter(cufftComplex* image, int width, int height, float cutoff) {
-  int x = blockIdx.x * blockDim.x + threadIdx.x;
-  int y = blockIdx.y * blockDim.y + threadIdx.y;
-  if(x<width && y < height) {
-    int idx = width*y+x;
-    int centerX = width/2;
-    int centerY = height/2;
-    float distance = sqrtf((x-centerX)*(x-centerX) + (y-centerY) * (y-centerY));
-    if(distance<cutoff) {
-      image[idx].x = 0.0f;
-      image[idx].y = 0.0f;
-    } 
-  }
+__global__ void highpassFilter(cufftComplex* data, int width, int height, float cutoff) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    if (x < width && y < height) {
+        int idx = y * width + x;
+        
+        // Calculate distance from center
+        float cx = x - width/2.0f;
+        float cy = y - height/2.0f;
+        float distance = sqrtf(cx*cx + cy*cy);
+        
+        // High-pass filter transfer function
+        float h = 1.0f - expf(-(distance*distance)/(2.0f*cutoff*cutoff));
+        
+        // Apply filter
+        data[idx].x *= h;
+        data[idx].y *= h;
+    }
 }
 
-__global__ void NormalizeAndZeroImaginary(cufftComplex* data,int width, int height) {
-  int x = blockIdx.x * blockDim.x + threadIdx.x;
-  int y = blockIdx.y * blockDim.y + threadIdx.y;
-  if(x<width && y<height) {
-    int idx = width*y+x;
-    float scale = 1.0f/(width*height);
-    data[idx].x*=scale;
-    data[idx].y*=scale;
-
-    if(fabs(data[idx].y)<1e-6) {
-      data[idx].y= 0.0f;
+__global__ void NormalizeAndZeroImaginary(cufftComplex* data, int width, int height) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    if (x < width && y < height) {
+        int idx = y * width + x;
+        // Only divide by N (width * height) for IFFT normalization
+        // Don't add back any mean/DC component
+        data[idx].x = data[idx].x / (width * height);
+        data[idx].y = 0.0f; // Zero out imaginary component
     }
-  }
 }
 
 __global__ void fftShift(cufftComplex* data, int width, int height) {
@@ -578,10 +582,56 @@ __global__ void fftShift(cufftComplex* data, int width, int height) {
   __syncthreads();
 }
 
+__global__ void calculateMean(const cufftComplex* data, int width, int height, float* mean) {
+    // Define shared memory - size should match block dimensions
+    extern __shared__ float sharedSum[];  // Dynamic shared memory allocation
+    
+    // Calculate correct 2D indices
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int tid = threadIdx.y * blockDim.x + threadIdx.x;
+    
+    // Initialize shared memory
+    sharedSum[tid] = 0.0f;
+    
+    // Load data into shared memory
+    if(x < width && y < height) {
+        int idx = y * width + x;
+        sharedSum[tid] = data[idx].x;  // Using real component of complex number
+    }
+    __syncthreads();
+    
+    // Parallel reduction within the block
+    for(int stride = (blockDim.x * blockDim.y) / 2; stride > 0; stride >>= 1) {
+        if(tid < stride) {
+            sharedSum[tid] += sharedSum[tid + stride];
+        }
+        __syncthreads();
+    }
+    
+    // Add block result to global sum
+    if(tid == 0) {
+        atomicAdd(mean, sharedSum[0]);
+    }
+}
+
+__global__ void addMean(cufftComplex* data, int width, int height, float mean) {
+  int x = blockDim.x*blockIdx.x+threadIdx.x;
+  int y = blockDim.y*blockIdx.y+threadIdx.y;
+  if(x<width && y<height) {
+    int idx = width*y +x;
+    data[idx].x+=mean;
+  }
+}
+
+__global__ void printMean(float* mean,int width,int height) {
+  int size = width*height;
+  float out = *mean/size;
+  printf("%.4f \n",out);
+}
 
 void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, int height) {
   uchar4* d_image;
-  rgbCufft complexImage;
   int threadsPerBlock = 16;
   int numBlocksX = (width + threadsPerBlock - 1) / threadsPerBlock;
   int numBlocksY = (height + threadsPerBlock - 1) / threadsPerBlock;
@@ -603,16 +653,36 @@ void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, 
   cudaMalloc(&blueOut,width*height*sizeof(cufftComplex));
   cudaMalloc(&greenOut,width*height*sizeof(cufftComplex));
 
-  complexImage.red = red;
-  complexImage.blue = blue;
-  complexImage.green = green;
-
   cudaMalloc(&d_image,width*height*sizeof(uchar4));
   cudaMemcpy(d_image,imageLoaded,width*height*sizeof(uchar4),cudaMemcpyHostToDevice);
 
   uchar4ToCufftComplex<<<blocks,threads>>>(red,blue,green, d_image,width,height);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
+
+  //mean caluclation for dc
+  float* redMean;
+  cudaMalloc(&redMean,sizeof(float));
+  float* blueMean;
+  cudaMalloc(&blueMean,sizeof(float));
+  float* greenMean;
+  cudaMalloc(&greenMean,sizeof(float));
+  size_t sharedMemSize = blocks.x * blocks.y * sizeof(float);
+  calculateMean<<<blocks,threads,sharedMemSize>>>(red,width,height,redMean);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
+  calculateMean<<<blocks,threads,sharedMemSize>>>(blue,width,height,blueMean);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
+  calculateMean<<<blocks,threads,sharedMemSize>>>(green,width,height,greenMean);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+  printMean<<<1,1>>>(redMean,width,height);
+  printMean<<<1,1>>>(greenMean,width,height);
+  printMean<<<1,1>>>(blueMean,width,height);
+
 
   cufftHandle plan;
   cufftPlan2d(&plan,width,height,CUFFT_C2C);
@@ -692,6 +762,22 @@ void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, 
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
 
+  calculateMean<<<blocks,threads,sharedMemSize>>>(red,width,height,redMean);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
+  calculateMean<<<blocks,threads,sharedMemSize>>>(blue,width,height,blueMean);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+
+  calculateMean<<<blocks,threads,sharedMemSize>>>(green,width,height,greenMean);
+  cudaDeviceSynchronize();
+  checkCuda(cudaGetLastError());
+  printMean<<<1,1>>>(redMean,width,height);
+  printMean<<<1,1>>>(greenMean,width,height);
+  printMean<<<1,1>>>(blueMean,width,height);
+
+
   ComplexRGBToUchar<<<blocks,threads>>>(red,green,blue,d_image,width,height);
   cudaDeviceSynchronize();
   checkCuda(cudaGetLastError());
@@ -702,9 +788,6 @@ void imageFFTImageGenerate(uchar4 *returnImage, uchar4 *imageLoaded, int width, 
   cufftDestroy(plan);
 
   cudaFree(d_image);
-  checkCuda(cudaFree(complexImage.red));
-  checkCuda(cudaFree(complexImage.green));
-  checkCuda(cudaFree(complexImage.blue));
  }
 
 
